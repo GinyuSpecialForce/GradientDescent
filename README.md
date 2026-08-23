@@ -2,6 +2,18 @@
 
 A Python program that performs gradient descent on multi-dimensional functions with adaptive learning rates and 3D visualization.
 
+<img width="1440" height="872" alt="gradient.py1" src="https://github.com/user-attachments/assets/babd8658-cf5a-4be2-949a-34045093eef1" />
+
+<img width="1440" height="900" alt="gradient.py2" src="https://github.com/user-attachments/assets/883bd464-b88f-4285-aec4-69f146e81082" />
+
+<img width="1440" height="900" alt="gradient.py3" src="https://github.com/user-attachments/assets/de7efd4e-b4ad-4695-b9d2-d2f00b5a778c" />
+
+<img width="1440" height="900" alt="gradient.py4" src="https://github.com/user-attachments/assets/57359959-cd95-4f67-82ec-bc6bca5833d5" />
+
+<img width="1440" height="900" alt="gradient.py5" src="https://github.com/user-attachments/assets/e84d299d-eb27-491a-b480-f83568ed3fd3" />
+
+
+
 ## What is Gradient Descent?
 
 Gradient descent is an optimization algorithm used to find the minimum of a function. It works by:
