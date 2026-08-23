@@ -1,4 +1,5 @@
 import math
+import argparse
 import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
@@ -104,9 +105,134 @@ class LossSurface:
     
     def evaluate_point(self, x1, x2):
         # Evaluate the function at a single point
-        self.namespace['x1'] = x1
-        self.namespace['x2'] = x2
-        return eval(self.func_str, {"__builtins__": {}}, self.namespace)
+        try:
+            self.namespace['x1'] = x1
+            self.namespace['x2'] = x2
+            return eval(self.func_str, {"__builtins__": {}}, self.namespace)
+        except Exception as e:
+            print(f"   Error evaluating at ({x1}, {x2}): {e}")
+            return float('inf')
+
+
+def parse_arguments():
+    """Parse command-line arguments for non-interactive mode."""
+    parser = argparse.ArgumentParser(
+        description='Gradient Descent Visualizer - Optimize multi-dimensional functions.',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python gradient.py -f "x1**2 + x2**2" -s "3,4" -lr 0.1 -i 50
+  python gradient.py -f "(x1-2)**2 + (x2-1)**2" -s "0,0" --decay inverse --save my_run
+  python gradient.py -f "x1**2 + x2**2 + x3**2" -s "1,2,3" --no-plots
+        """
+    )
+    
+    parser.add_argument(
+        '-f', '--function',
+        type=str,
+        help='Function to minimize (e.g., "x1**2 + x2**2")'
+    )
+    
+    parser.add_argument(
+        '-s', '--start',
+        type=str,
+        help='Starting values, comma-separated (e.g., "3, 4")'
+    )
+    
+    parser.add_argument(
+        '-lr', '--learning_rate',
+        type=float,
+        help='Initial learning rate (if not provided, will be suggested)'
+    )
+    
+    parser.add_argument(
+        '-d', '--decay',
+        type=str,
+        choices=['inverse', 'inverse_sqrt', 'inverse_power'],
+        default='inverse',
+        help='Decay schedule: inverse, inverse_sqrt, or inverse_power (default: inverse)'
+    )
+    
+    parser.add_argument(
+        '-p', '--power',
+        type=float,
+        default=0.75,
+        help='Power for inverse_power decay (must be > 0.5, default: 0.75)'
+    )
+    
+    parser.add_argument(
+        '-i', '--iterations',
+        type=int,
+        default=100,
+        help='Maximum number of iterations (default: 100)'
+    )
+    
+    parser.add_argument(
+        '--no-plots',
+        action='store_true',
+        help='Disable plotting (run in headless mode)'
+    )
+    
+    parser.add_argument(
+        '--save',
+        type=str,
+        metavar='PREFIX',
+        help='Save plots to files with this prefix (e.g., "my_run" saves as my_run_3d.png)'
+    )
+    
+    return parser.parse_args()
+
+
+def safe_get_input(prompt, input_type=str, validation=None, error_msg="Invalid input. Try again."):
+    """
+    Safely get user input with validation and retry.
+    
+    Parameters:
+    - prompt: The prompt to display
+    - input_type: Type to convert to (str, float, int)
+    - validation: Optional function that returns True for valid input
+    - error_msg: Message to show on error
+    
+    Returns:
+    - Validated user input
+    """
+    while True:
+        try:
+            user_input = input(prompt)
+            if input_type != str:
+                user_input = input_type(user_input)
+            if validation and not validation(user_input):
+                print(error_msg)
+                continue
+            return user_input
+        except ValueError:
+            print(f"  Invalid input. Expected {input_type.__name__}. Try again.")
+
+
+def validate_function(func_str, namespace, num_vars=2):
+    """
+    Validate that the function string is syntactically correct.
+    
+    Parameters:
+    - func_str: The function string
+    - namespace: The namespace with math functions
+    - num_vars: Number of variables to test
+    
+    Returns:
+    - True if valid, False otherwise
+    """
+    test_vals = [1.0] * num_vars
+    try:
+        for i, val in enumerate(test_vals):
+            namespace[f'x{i+1}'] = val
+        result = eval(func_str, {"__builtins__": {}}, namespace)
+        if not isinstance(result, (int, float)):
+            print(f"   Function returned {type(result)} instead of number")
+            return False
+        return True
+    except Exception as e:
+        print(f"   Function validation failed: {e}")
+        return False
 
 
 def suggest_learning_rate(func_str, start_values):
@@ -237,59 +363,29 @@ def plot_convergence_multi(history, var_names, title=None):
     return fig, ax
 
 
-def gradient_descent_interactive():
-    print("\nHow to enter multi-variable functions:")
-    print("  - Use x1, x2, x3, ... for any number of variables")
-    print("  - Example (2D): x1**2 + x2**2")
-    print("  - Example (3D): x1**2 + x2**2 + x3**2")
-    print("  - Example (4D): x1**2 + x2**2 + x3**2 + x4**2")
-    print("  - Example: (x1 - 2)**2 + (x2 - 1)**2 + (x3 + 3)**2")
-    print("-" * 70)
+def run_gradient_descent(func_str, start_values, initial_lr, decay_type, power, max_iterations, 
+                         show_plots=True, save_prefix=None):
+    """
+    Run gradient descent and optionally generate visualizations.
     
-    # Get user input
-    func_str = input("\nEnter your function in terms of x1, x2, ... : ")
-    start_str = input("Enter starting values (comma-separated, e.g., 3, 4, 5): ")
+    Parameters:
+    - func_str: The function string
+    - start_values: List of starting values
+    - initial_lr: Initial learning rate
+    - decay_type: Decay schedule type
+    - power: Power for inverse_power decay
+    - max_iterations: Maximum iterations
+    - show_plots: Whether to display plots
+    - save_prefix: Optional prefix for saving plots
     
-    # Parse starting values
-    start_values = [float(x.strip()) for x in start_str.split(',')]
+    Returns:
+    - x: Final values
+    - history: History of all values
+    - lr_history: History of learning rates
+    """
+    
     num_vars = len(start_values)
-    
-    # Create variable names dynamically
     var_names = [f'x{i+1}' for i in range(num_vars)]
-    
-    print(f"\n✓ Detected {num_vars} variables: {', '.join(var_names)}")
-    
-    # Suggest initial learning rate
-    suggested_lr, reason = suggest_learning_rate(func_str, start_values)
-    print(f"\n  Initial Learning Rate Suggestion: {suggested_lr}")
-    print(f"   Reason: {reason}")
-    
-    # Get learning rate with option to use suggested
-    use_suggested = input(f"\nUse suggested initial learning rate {suggested_lr}? (y/n, or enter your own): ").lower()
-    if use_suggested == 'y' or use_suggested == '':
-        initial_lr = suggested_lr
-        print(f"  Using suggested initial learning rate: {initial_lr}")
-    else:
-        initial_lr = float(input("Enter initial learning rate: "))
-    
-    # Get decay parameters
-    print("\nLearning rate decay schedule:")
-    print("  1. inverse:      ηₙ = η₀ / (1 + η₀*n)  [RECOMMENDED]")
-    print("  2. inverse_sqrt: ηₙ = η₀ / √n")
-    print("  3. inverse_power: ηₙ = η₀ / n^p (p > 0.5)")
-    
-    decay_choice = input("\nChoose decay schedule (1-3, default = 1): ").strip()
-    if decay_choice == '2':
-        decay_type = 'inverse_sqrt'
-        power = 0.5
-    elif decay_choice == '3':
-        decay_type = 'inverse_power'
-        power = float(input("Enter power p (must be > 0.5, e.g., 0.75): "))
-    else:
-        decay_type = 'inverse'
-        power = 1.0
-    
-    max_iterations = int(input("Enter maximum number of iterations: "))
     
     # Create namespace with math functions and variables
     namespace = {
@@ -309,12 +405,27 @@ def gradient_descent_interactive():
     for i, val in enumerate(start_values):
         namespace[f'x{i+1}'] = val
     
-    # Define the function using the string
+    # Validate the function
+    if not validate_function(func_str, namespace, num_vars):
+        print("  Function validation failed. Please check your syntax.")
+        return None, None, None
+    
+    # Define the function using the string with error handling
     def func(vals):
-        # Update namespace with current variable values
-        for i, val in enumerate(vals):
-            namespace[f'x{i+1}'] = val
-        return eval(func_str, {"__builtins__": {}}, namespace)
+        try:
+            # Update namespace with current variable values
+            for i, val in enumerate(vals):
+                namespace[f'x{i+1}'] = val
+            return eval(func_str, {"__builtins__": {}}, namespace)
+        except ZeroDivisionError:
+            print(f"   Division by zero at {vals}")
+            return float('inf')
+        except ValueError as e:
+            print(f"   Math error at {vals}: {e}")
+            return float('inf')
+        except Exception as e:
+            print(f"   Unexpected error at {vals}: {e}")
+            return float('inf')
     
     # Compute gradient numerically (partial derivatives)
     def gradient(vals, h=1e-7):
@@ -391,7 +502,7 @@ def gradient_descent_interactive():
         grad_magnitude = math.sqrt(sum(g**2 for g in grad))
         if grad_magnitude < 1e-8:
             print("-" * (6 + 16 * num_vars + 28))
-            print(f"  Converged after {i+1} iterations! (gradient magnitude = {grad_magnitude:.2e})")
+            print(f"    Converged after {i+1} iterations! (gradient magnitude = {grad_magnitude:.2e})")
             break
         
         # Store history
@@ -401,7 +512,7 @@ def gradient_descent_interactive():
         # Safety check: if numbers get too large, stop
         if any(abs(val) > 1e10 for val in x):
             print("-" * (6 + 16 * num_vars + 28))
-            print("   WARNING: Values are exploding! Try a smaller initial learning rate.")
+            print("      WARNING: Values are exploding! Try a smaller initial learning rate.")
             break
     
     # Final result
@@ -413,9 +524,8 @@ def gradient_descent_interactive():
     print(f"  Final learning rate: {current_lr:.8f}")
     print("=" * 70)
     
-    # Visualization Section
-    plot_choice = input("\nWould you like to see visualizations? (y/n): ").lower()
-    if plot_choice == 'y':
+    # ----- VISUALIZATION SECTION -----
+    if show_plots:
         
         # 3D Visualization (only for 2-dimensions)
         if num_vars == 2:
@@ -428,7 +538,7 @@ def gradient_descent_interactive():
             x2_max_abs = max(abs(min(x2_values)), abs(max(x2_values)))
             
             if x1_max_abs > 10 or x2_max_abs > 10:
-                print("\n   Values exploded! Limiting visualization range to [-10, 10].")
+                print("\n      Values exploded! Limiting visualization range to [-10, 10].")
                 x1_range = (-10, 10)
                 x2_range = (-10, 10)
             else:
@@ -451,13 +561,12 @@ def gradient_descent_interactive():
                 trajectory=history,
                 title=f'3D Gradient Descent Path\n{func_str}'
             )
-            plt.show()
             
-            # Save 3D figure option
-            save_3d_choice = input("\nWould you like to save the 3D figure? (y/n): ").lower()
-            if save_3d_choice == 'y':
-                fig_3d.savefig('gradient_descent_3d.png', dpi=300, bbox_inches='tight')
-                print("    Saved: gradient_descent_3d.png")
+            if save_prefix:
+                fig_3d.savefig(f'{save_prefix}_3d.png', dpi=300, bbox_inches='tight')
+                print(f"    Saved: {save_prefix}_3d.png")
+            else:
+                plt.show()
         
         # Convergence plot
         print("\n[2/3] Generating convergence plot...")
@@ -466,40 +575,166 @@ def gradient_descent_interactive():
             var_names=var_names,
             title=f'Convergence of Variables\n{func_str}'
         )
-        plt.show()
         
-        # Save convergence figure option
-        save_conv_choice = input("\nWould you like to save the convergence figure? (y/n): ").lower()
-        if save_conv_choice == 'y':
-            fig.savefig('gradient_descent_convergence.png', dpi=300, bbox_inches='tight')
-            print("    Saved: gradient_descent_convergence.png")
+        if save_prefix:
+            fig.savefig(f'{save_prefix}_convergence.png', dpi=300, bbox_inches='tight')
+            print(f"    Saved: {save_prefix}_convergence.png")
+        else:
+            plt.show()
         
         # Learning rate decay plot
         print("\n[3/3] Generating learning rate decay plot...")
-        plt.figure(figsize=(10, 6))
-        plt.plot(range(len(lr_history)), lr_history, 'b-', linewidth=2)
-        plt.xlabel('Iteration', fontsize=12)
-        plt.ylabel('Learning Rate', fontsize=12)
-        plt.title(f'Learning Rate Decay ({decay_type})', fontsize=14)
-        plt.grid(True, alpha=0.3)
-        plt.yscale('log')  # Log scale makes the decay more visible
-        plt.show()
+        fig_lr, ax_lr = plt.subplots(figsize=(10, 6))
+        ax_lr.plot(range(len(lr_history)), lr_history, 'b-', linewidth=2)
+        ax_lr.set_xlabel('Iteration', fontsize=12)
+        ax_lr.set_ylabel('Learning Rate', fontsize=12)
+        ax_lr.set_title(f'Learning Rate Decay ({decay_type})', fontsize=14)
+        ax_lr.grid(True, alpha=0.3)
+        ax_lr.set_yscale('log')  # Log scale makes the decay more visible
+        plt.tight_layout()
         
-        # Save LR figure option
-        save_lr_choice = input("\nWould you like to save the learning rate decay figure? (y/n): ").lower()
-        if save_lr_choice == 'y':
-            plt.figure(figsize=(10, 6))
-            plt.plot(range(len(lr_history)), lr_history, 'b-', linewidth=2)
-            plt.xlabel('Iteration', fontsize=12)
-            plt.ylabel('Learning Rate', fontsize=12)
-            plt.title(f'Learning Rate Decay ({decay_type})', fontsize=14)
-            plt.grid(True, alpha=0.3)
-            plt.yscale('log')
-            plt.savefig('learning_rate_decay.png', dpi=300, bbox_inches='tight')
-            print("    Saved: learning_rate_decay.png")
-            plt.close()
+        if save_prefix:
+            fig_lr.savefig(f'{save_prefix}_lr_decay.png', dpi=300, bbox_inches='tight')
+            print(f"    Saved: {save_prefix}_lr_decay.png")
+            plt.close(fig_lr)
+        else:
+            plt.show()
     
     return x, history, lr_history
+
+
+def gradient_descent_interactive(args=None):
+    """
+    Run gradient descent, either interactively or from command-line arguments.
+    
+    Parameters:
+    - args: Parsed command-line arguments (optional)
+    """
+    
+    # ---- SETUP: Interactive or Command-Line ----
+    if args and args.function and args.start:
+        # Command-line mode
+        func_str = args.function
+        start_values = [float(x.strip()) for x in args.start.split(',')]
+        decay_type = args.decay
+        power = args.power
+        max_iterations = args.iterations
+        show_plots = not args.no_plots
+        save_prefix = args.save
+        
+        # Suggest LR if not provided
+        if args.learning_rate is None:
+            initial_lr, reason = suggest_learning_rate(func_str, start_values)
+            print(f"  Suggested learning rate: {initial_lr} (Reason: {reason})")
+        else:
+            initial_lr = args.learning_rate
+        
+        print(f"\n  Running gradient descent in command-line mode...")
+        print(f"   Function: {func_str}")
+        print(f"   Start: {start_values}")
+        print(f"   Learning Rate: {initial_lr}")
+        print(f"   Decay: {decay_type}")
+        print(f"   Iterations: {max_iterations}")
+        print("-" * 70)
+        
+        # Run gradient descent
+        return run_gradient_descent(
+            func_str, start_values, initial_lr, decay_type, 
+            power, max_iterations, show_plots, save_prefix
+        )
+    
+    else:
+        # Interactive mode
+        print("Gradient Descent Visualizer")
+        print("-" * 70)
+        print("\nHow to enter multi-variable functions:")
+        print("  - Use x1, x2, x3, ... for any number of variables")
+        print("  - Example (2D): x1**2 + x2**2")
+        print("  - Example (3D): x1**2 + x2**2 + x3**2")
+        print("  - Example (4D): x1**2 + x2**2 + x3**2 + x4**2")
+        print("  - Example: (x1 - 2)**2 + (x2 - 1)**2 + (x3 + 3)**2")
+        print("-" * 70)
+        
+        # Get user input with validation
+        func_str = safe_get_input(
+            "\nEnter your function in terms of x1, x2, ... : ",
+            validation=lambda s: any(var in s for var in ['x1', 'x2']),
+            error_msg="Function must contain x1 or x2. Try again."
+        )
+        
+        start_str = safe_get_input(
+            "Enter starting values (comma-separated, e.g., 3, 4, 5): ",
+            validation=lambda s: len(s.split(',')) >= 2 and all(
+                x.strip().replace('-','').replace('.','').isdigit() 
+                for x in s.split(',')
+            ),
+            error_msg="Invalid numbers. Use comma-separated numbers (e.g., 3, 4)"
+        )
+        
+        # Parse starting values
+        start_values = [float(x.strip()) for x in start_str.split(',')]
+        num_vars = len(start_values)
+        
+        # Create variable names dynamically
+        var_names = [f'x{i+1}' for i in range(num_vars)]
+        
+        print(f"\n    Detected {num_vars} variables: {', '.join(var_names)}")
+        
+        # Suggest initial learning rate
+        suggested_lr, reason = suggest_learning_rate(func_str, start_values)
+        print(f"\n    Initial Learning Rate Suggestion: {suggested_lr}")
+        print(f"   Reason: {reason}")
+        
+        # Get learning rate with option to use suggested
+        use_suggested = input(f"\nUse suggested initial learning rate {suggested_lr}? (y/n, or enter your own): ").lower()
+        if use_suggested == 'y' or use_suggested == '':
+            initial_lr = suggested_lr
+            print(f"    Using suggested initial learning rate: {initial_lr}")
+        else:
+            initial_lr = safe_get_input(
+                "Enter initial learning rate: ",
+                input_type=float,
+                validation=lambda x: x > 0,
+                error_msg="Learning rate must be positive."
+            )
+        
+        # Get decay parameters
+        print("\nLearning rate decay schedule:")
+        print("  1. inverse:      ηₙ = η₀ / (1 + η₀*n)  [RECOMMENDED]")
+        print("  2. inverse_sqrt: ηₙ = η₀ / √n")
+        print("  3. inverse_power: ηₙ = η₀ / n^p (p > 0.5)")
+        
+        decay_choice = input("\nChoose decay schedule (1-3, default = 1): ").strip()
+        if decay_choice == '2':
+            decay_type = 'inverse_sqrt'
+            power = 0.5
+        elif decay_choice == '3':
+            decay_type = 'inverse_power'
+            power = safe_get_input(
+                "Enter power p (must be > 0.5, e.g., 0.75): ",
+                input_type=float,
+                validation=lambda x: x > 0.5,
+                error_msg="Power must be greater than 0.5."
+            )
+        else:
+            decay_type = 'inverse'
+            power = 1.0
+        
+        max_iterations = safe_get_input(
+            "Enter maximum number of iterations: ",
+            input_type=int,
+            validation=lambda x: x > 0,
+            error_msg="Iterations must be a positive integer."
+        )
+        
+        show_plots = True
+        save_prefix = None
+        
+        # Run gradient descent
+        return run_gradient_descent(
+            func_str, start_values, initial_lr, decay_type, 
+            power, max_iterations, show_plots, save_prefix
+        )
 
 
 if __name__ == "__main__":
@@ -507,11 +742,25 @@ if __name__ == "__main__":
     try:
         import numpy
         import matplotlib
+        import argparse
     except ImportError:
-        print("\n   Required libraries not installed.")
+        print("\n      Required libraries not installed.")
         print("   Please install them with:")
-        print("   pip install numpy matplotlib")
+        print("   pip install numpy matplotlib argparse")
         print("\nThe gradient descent will still work, but visualizations won't.")
         print("-" * 70)
     
-    gradient_descent_interactive()
+    # Parse command-line arguments
+    args = parse_arguments()
+    
+    # Run with or without arguments
+    try:
+        gradient_descent_interactive(args)
+    except KeyboardInterrupt:
+        print("\n\n   Interrupted by user. Exiting...")
+    except Exception as e:
+        print(f"\n   Unexpected error: {e}")
+        print("   Please check your input and try again.")
+        if args and args.function:
+            print("   Try running with --help for usage information.")
+        exit(1)
