@@ -1,5 +1,6 @@
 import math
 import argparse
+import random
 import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
@@ -117,34 +118,38 @@ class LossSurface:
 def parse_arguments():
     """Parse command-line arguments for non-interactive mode."""
     parser = argparse.ArgumentParser(
-        description='Gradient Descent Visualizer - Optimize multi-dimensional functions.',
+        description='Gradient Descent Visualizer',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
+  # Basic run
   python gradient.py -f "x1**2 + x2**2" -s "3,4" -lr 0.1 -i 50
-  python gradient.py -f "(x1-2)**2 + (x2-1)**2" -s "0,0" --decay inverse --save my_run
-  python gradient.py -f "x1**2 + x2**2 + x3**2" -s "1,2,3" --no-plots
+  
+  # Multi-start (10 random starts in range [-5,5])
+  python gradient.py -f "sin(x1)*cos(x2)" --multi 10 --range=-5,5
+  
+  # With noise (adds random jumps to escape local minima)
+  python gradient.py -f "sin(x1)*cos(x2)" -s "1,1" --noise 0.5 --noise_freq 10
+  
+  # Both multi-start AND noise
+  python gradient.py -f "sin(x1)*cos(x2)" --multi 10 --range=-5,5 --noise 0.3 --noise_freq 8
         """
     )
-    
     parser.add_argument(
         '-f', '--function',
         type=str,
         help='Function to minimize (e.g., "x1**2 + x2**2")'
     )
-    
     parser.add_argument(
         '-s', '--start',
         type=str,
         help='Starting values, comma-separated (e.g., "3, 4")'
     )
-    
     parser.add_argument(
         '-lr', '--learning_rate',
         type=float,
         help='Initial learning rate (if not provided, will be suggested)'
     )
-    
     parser.add_argument(
         '-d', '--decay',
         type=str,
@@ -152,47 +157,65 @@ Examples:
         default='inverse',
         help='Decay schedule: inverse, inverse_sqrt, or inverse_power (default: inverse)'
     )
-    
     parser.add_argument(
         '-p', '--power',
         type=float,
         default=0.75,
         help='Power for inverse_power decay (must be > 0.5, default: 0.75)'
     )
-    
     parser.add_argument(
         '-i', '--iterations',
         type=int,
         default=100,
-        help='Maximum number of iterations (default: 100)'
+        help='Maximum number of iterations per run (default: 100)'
     )
-    
     parser.add_argument(
         '--no-plots',
         action='store_true',
         help='Disable plotting (run in headless mode)'
     )
-    
     parser.add_argument(
         '--save',
         type=str,
         metavar='PREFIX',
         help='Save plots to files with this prefix (e.g., "my_run" saves as my_run_3d.png)'
     )
-    
+    parser.add_argument(
+        '--multi',
+        type=int,
+        metavar='N',
+        help='Multi-start: run gradient descent N times from different starting points'
+    )
+    # FIXED: Use a simple string type without custom parser, with updated help text
+    parser.add_argument(
+        '--range',
+        type=str,
+        default='-5,5',
+        help='Range for random starting points in multi-start mode. Use --range=-5,5'
+    )
+    parser.add_argument(
+        '--noise',
+        type=float,
+        metavar='AMOUNT',
+        help='Add random noise to learning rate at intervals (e.g., 0.5)'
+    )
+    parser.add_argument(
+        '--noise_freq',
+        type=int,
+        default=10,
+        help='Frequency of noise injection (every N iterations, default: 10)'
+    )
     return parser.parse_args()
 
 
 def safe_get_input(prompt, input_type=str, validation=None, error_msg="Invalid input. Try again."):
     """
-    Safely get user input with validation and retry.
-    
+    Safely get user input with validation and retry
     Parameters:
     - prompt: The prompt to display
     - input_type: Type to convert to (str, float, int)
     - validation: Optional function that returns True for valid input
     - error_msg: Message to show on error
-    
     Returns:
     - Validated user input
     """
@@ -211,13 +234,11 @@ def safe_get_input(prompt, input_type=str, validation=None, error_msg="Invalid i
 
 def validate_function(func_str, namespace, num_vars=2):
     """
-    Validate that the function string is syntactically correct.
-    
+    Validate that the function string is syntactically correct
     Parameters:
     - func_str: The function string
     - namespace: The namespace with math functions
     - num_vars: Number of variables to test
-    
     Returns:
     - True if valid, False otherwise
     """
@@ -363,10 +384,10 @@ def plot_convergence_multi(history, var_names, title=None):
     return fig, ax
 
 
-def run_gradient_descent(func_str, start_values, initial_lr, decay_type, power, max_iterations, 
-                         show_plots=True, save_prefix=None):
+def run_single_gradient_descent(func_str, start_values, initial_lr, decay_type, power, max_iterations, 
+                                 noise_amount=0, noise_freq=10, verbose=True):
     """
-    Run gradient descent and optionally generate visualizations.
+    Run a single gradient descent instance, optionally with noise
     
     Parameters:
     - func_str: The function string
@@ -375,13 +396,15 @@ def run_gradient_descent(func_str, start_values, initial_lr, decay_type, power, 
     - decay_type: Decay schedule type
     - power: Power for inverse_power decay
     - max_iterations: Maximum iterations
-    - show_plots: Whether to display plots
-    - save_prefix: Optional prefix for saving plots
-    
+    - noise_amount: Amount of random noise to add to LR (0 = no noise)
+    - noise_freq: How often to inject noise (every N iterations)
+    - verbose: Whether to print iteration details
     Returns:
     - x: Final values
     - history: History of all values
     - lr_history: History of learning rates
+    - final_f: Final function value
+    - noise_used: Number of noise injections
     """
     
     num_vars = len(start_values)
@@ -405,11 +428,6 @@ def run_gradient_descent(func_str, start_values, initial_lr, decay_type, power, 
     for i, val in enumerate(start_values):
         namespace[f'x{i+1}'] = val
     
-    # Validate the function
-    if not validate_function(func_str, namespace, num_vars):
-        print("  Function validation failed. Please check your syntax.")
-        return None, None, None
-    
     # Define the function using the string with error handling
     def func(vals):
         try:
@@ -418,13 +436,10 @@ def run_gradient_descent(func_str, start_values, initial_lr, decay_type, power, 
                 namespace[f'x{i+1}'] = val
             return eval(func_str, {"__builtins__": {}}, namespace)
         except ZeroDivisionError:
-            print(f"   Division by zero at {vals}")
             return float('inf')
-        except ValueError as e:
-            print(f"   Math error at {vals}: {e}")
+        except ValueError:
             return float('inf')
-        except Exception as e:
-            print(f"   Unexpected error at {vals}: {e}")
+        except Exception:
             return float('inf')
     
     # Compute gradient numerically (partial derivatives)
@@ -444,37 +459,33 @@ def run_gradient_descent(func_str, start_values, initial_lr, decay_type, power, 
         
         return grad
     
-    # Run gradient descent with diminishing learning rate
+    # Run gradient descent
     x = start_values.copy()
     history = [x.copy()]
     lr_history = [initial_lr]
-    
-    print(f"\nf({', '.join(var_names)}) = {func_str}")
-    print(f"Start: {', '.join([f'{v:.6f}' for v in start_values])}")
-    print(f"Initial Learning Rate: {initial_lr:.6f}")
-    print(f"Decay Schedule: {decay_type}")
-    if decay_type == 'inverse_power':
-        print(f"Power: {power:.4f}")
-    print(f"Max Iterations: {max_iterations}")
-    print("=" * 70)
-    
-    # Print header
-    header = f"{'Iter':<6} | "
-    for name in var_names:
-        header += f"{name:<14} | "
-    header += f"{'f(x)':<14} | {'LR':<10}"
-    print(header)
-    print("-" * (6 + 16 * num_vars + 28))
+    current_lr = initial_lr
+    noise_used = 0
     
     for i in range(max_iterations):
         grad = gradient(x)
         f_val = func(x)
         
-        # Calculate learning rate for this iteration
+        # Calculate base learning rate for this iteration
         if decay_type == 'inverse_power':
-            current_lr = get_learning_rate(i, initial_lr, decay_type, power=power)
+            base_lr = get_learning_rate(i, initial_lr, decay_type, power=power)
         else:
-            current_lr = get_learning_rate(i, initial_lr, decay_type)
+            base_lr = get_learning_rate(i, initial_lr, decay_type)
+        
+        # Apply noise if enabled
+        if noise_amount > 0 and i > 0 and i % noise_freq == 0:
+            # Add random noise to learning rate
+            noise = random.uniform(-noise_amount, noise_amount)
+            current_lr = max(0, base_lr + noise * base_lr)  # Ensure LR stays positive
+            noise_used += 1
+            if verbose:
+                print(f"        Noise injected at iter {i}: LR {base_lr:.6f} -> {current_lr:.6f}")
+        else:
+            current_lr = base_lr
         
         # Update rule: x_new = x_old - learning_rate * gradient
         x_new = x.copy()
@@ -485,24 +496,29 @@ def run_gradient_descent(func_str, start_values, initial_lr, decay_type, power, 
         x = x_new
         f_val = func(x)
         
-        # Format f(x) with scientific notation if it's very small or very large
-        if abs(f_val) < 0.001 or abs(f_val) > 1000:
-            f_str = f"{f_val:<14.6e}"
-        else:
-            f_str = f"{f_val:<14.8f}"
-        
-        # Print current iteration with dynamic columns
-        row = f"{i:<6} | "
-        for val in x:
-            row += f"{val:<14.8f} | "
-        row += f"{f_str} | {current_lr:<10.8f}"
-        print(row)
+        # Print current iteration if verbose
+        if verbose:
+            # Format f(x) with scientific notation if it's very small or very large
+            if abs(f_val) < 0.001 or abs(f_val) > 1000:
+                f_str = f"{f_val:<14.6e}"
+            else:
+                f_str = f"{f_val:<14.8f}"
+            
+            # Print current iteration with dynamic columns
+            row = f"{i:<6} | "
+            for val in x:
+                row += f"{val:<14.8f} | "
+            row += f"{f_str} | {current_lr:<10.8f}"
+            if noise_amount > 0 and i > 0 and i % noise_freq == 0:
+                row += "  "
+            print(row)
         
         # Check for convergence
         grad_magnitude = math.sqrt(sum(g**2 for g in grad))
         if grad_magnitude < 1e-8:
-            print("-" * (6 + 16 * num_vars + 28))
-            print(f"    Converged after {i+1} iterations! (gradient magnitude = {grad_magnitude:.2e})")
+            if verbose:
+                print("-" * (6 + 16 * num_vars + 28))
+                print(f"    Converged after {i+1} iterations! (gradient magnitude = {grad_magnitude:.2e})")
             break
         
         # Store history
@@ -511,20 +527,261 @@ def run_gradient_descent(func_str, start_values, initial_lr, decay_type, power, 
         
         # Safety check: if numbers get too large, stop
         if any(abs(val) > 1e10 for val in x):
-            print("-" * (6 + 16 * num_vars + 28))
-            print("      WARNING: Values are exploding! Try a smaller initial learning rate.")
+            if verbose:
+                print("-" * (6 + 16 * num_vars + 28))
+                print("      WARNING: Values are exploding! Try a smaller initial learning rate.")
             break
     
-    # Final result
+    final_f = func(x)
+    return x, history, lr_history, final_f, noise_used
+
+
+def run_multi_start_gradient_descent(func_str, start_values, initial_lr, decay_type, power, 
+                                      max_iterations, num_starts, range_str, 
+                                      noise_amount=0, noise_freq=10, show_plots=True, save_prefix=None):
+    """
+    Run gradient descent multiple times from different starting points
+    Parameters:
+    - Same as run_single_gradient_descent, plus:
+    - num_starts: Number of random starting points
+    - range_str: Range for random starts (e.g., "-5,5")
+    Returns:
+    - best_x: Best values found
+    - best_f: Best function value
+    - all_results: List of all run results
+    """
+    
+    # Parse range
+    range_parts = range_str.split(',')
+    min_val = float(range_parts[0].strip())
+    max_val = float(range_parts[1].strip())
+    num_vars = len(start_values)
+    
+    print(f"\n  Multi-start: Running {num_starts} gradient descents")
+    print(f"   Random start range: [{min_val}, {max_val}]")
+    print(f"   {'With noise' if noise_amount > 0 else 'No noise'}")
+    print("=" * 70)
+    
+    # Keep track of best result
+    best_f = float('inf')
+    best_x = None
+    best_history = None
+    best_lr_history = None
+    all_results = []
+    
+    for run_num in range(num_starts):
+        # Generate random starting point
+        if run_num == 0:
+            # First run uses the user-provided start
+            current_start = start_values.copy()
+        else:
+            # Generate random start within range
+            current_start = [random.uniform(min_val, max_val) for _ in range(num_vars)]
+        
+        print(f"\n--- Run {run_num + 1}/{num_starts} ---")
+        print(f"Start: {', '.join([f'{v:.4f}' for v in current_start])}")
+        
+        # Run gradient descent
+        x, history, lr_history, final_f, noise_used = run_single_gradient_descent(
+            func_str, current_start, initial_lr, decay_type, power, max_iterations,
+            noise_amount, noise_freq, verbose=False
+        )
+        
+        # Print summary for this run
+        print(f"  Final: {', '.join([f'{v:.4f}' for v in x])}  |  f(x) = {final_f:.6f}" + 
+              (f"    Noise used {noise_used} times" if noise_used > 0 else ""))
+        
+        # Store result
+        all_results.append({
+            'start': current_start,
+            'end': x,
+            'final_f': final_f,
+            'history': history,
+            'lr_history': lr_history,
+            'noise_used': noise_used
+        })
+        
+        # Update best
+        if final_f < best_f:
+            best_f = final_f
+            best_x = x
+            best_history = history
+            best_lr_history = lr_history
+            print(f"    NEW BEST: f(x) = {best_f:.6f}")
+    
+    # Print summary
+    print("\n" + "=" * 70)
+    print("Multi-start Summary")
+    print("=" * 70)
+    print(f"Best f(x): {best_f:.10f}")
+    print(f"Best x: {', '.join([f'{v:.6f}' for v in best_x])}")
+    print(f"Runs completed: {num_starts}")
+    print("=" * 70)
+    
+    if show_plots:
+        num_vars = len(start_values)
+        
+        # 1. 3D Visualization with all trajectories (only for 2D)
+        if num_vars == 2:
+            # Determine appropriate axis ranges
+            all_x1 = []
+            all_x2 = []
+            for result in all_results:
+                for point in result['history']:
+                    all_x1.append(point[0])
+                    all_x2.append(point[1])
+            
+            if all_x1 and all_x2:
+                x1_range = (min(all_x1) - 0.5, max(all_x1) + 0.5)
+                x2_range = (min(all_x2) - 0.5, max(all_x2) + 0.5)
+                
+                print("\n[1/3] Generating 3D visualization with all trajectories...")
+                
+                # Create the loss surface
+                ls = LossSurface(func_str, x1_range, x2_range)
+                
+                # Plot 3D surface with all trajectories
+                fig = plt.figure(figsize=(12, 8))
+                ax = fig.add_subplot(111, projection='3d')
+                
+                # Plot the surface
+                surf = ax.plot_surface(ls.X1, ls.X2, ls.Z, cmap='viridis', 
+                                       alpha=0.6, linewidth=0, antialiased=True)
+                fig.colorbar(surf, ax=ax, shrink=0.5, aspect=5, label='f(x)')
+                
+                # Plot all trajectories
+                colors = ['red', 'orange', 'yellow', 'green', 'blue', 'purple', 'pink', 'brown']
+                for i, result in enumerate(all_results):
+                    traj_x1 = [p[0] for p in result['history']]
+                    traj_x2 = [p[1] for p in result['history']]
+                    traj_z = [ls.evaluate_point(p[0], p[1]) for p in result['history']]
+                    color = colors[i % len(colors)]
+                    ax.plot(traj_x1, traj_x2, traj_z, '-', color=color, linewidth=1.5, alpha=0.7)
+                    # Mark start point
+                    ax.scatter(traj_x1[0], traj_x2[0], traj_z[0], 
+                              color=color, s=30, marker='o')
+                
+                # Mark the best end point in gold
+                if best_history:
+                    best_traj_x1 = [p[0] for p in best_history]
+                    best_traj_x2 = [p[1] for p in best_history]
+                    best_traj_z = [ls.evaluate_point(p[0], p[1]) for p in best_history]
+                    ax.plot(best_traj_x1, best_traj_x2, best_traj_z, 'gold', linewidth=3, label='BEST Path')
+                    ax.scatter(best_traj_x1[-1], best_traj_x2[-1], best_traj_z[-1], 
+                              color='gold', s=150, marker='*', label='BEST End')
+                
+                ax.set_xlabel('x1', fontsize=12)
+                ax.set_ylabel('x2', fontsize=12)
+                ax.set_zlabel('f(x1, x2)', fontsize=12)
+                ax.set_title(f'Multi-start Gradient Descent\n{num_starts} runs, Best in Gold', fontsize=14)
+                ax.legend()
+                ax.view_init(elev=25, azim=-60)
+                plt.tight_layout()
+                
+                if save_prefix:
+                    fig.savefig(f'{save_prefix}_multi_start_3d.png', dpi=300, bbox_inches='tight')
+                    print(f"    Saved: {save_prefix}_multi_start_3d.png")
+                else:
+                    plt.show()
+        
+        # 2. Best convergence plot
+        print("\n[2/3] Generating best convergence plot...")
+        var_names = [f'x{i+1}' for i in range(num_vars)]
+        fig_best, ax_best = plot_convergence_multi(
+            history=best_history,
+            var_names=var_names,
+            title=f'Best Run Convergence (f(x) = {best_f:.6f})\n{func_str}'
+        )
+        
+        if save_prefix:
+            fig_best.savefig(f'{save_prefix}_best_convergence.png', dpi=300, bbox_inches='tight')
+            print(f"    Saved: {save_prefix}_best_convergence.png")
+        else:
+            plt.show()
+        
+        # 3. Learning rate decay plot for the best run
+        print("\n[3/3] Generating learning rate decay plot for best run...")
+        fig_lr, ax_lr = plt.subplots(figsize=(10, 6))
+        ax_lr.plot(range(len(best_lr_history)), best_lr_history, 'b-', linewidth=2)
+        ax_lr.set_xlabel('Iteration', fontsize=12)
+        ax_lr.set_ylabel('Learning Rate', fontsize=12)
+        ax_lr.set_title(f'Learning Rate Decay - Best Run (f(x) = {best_f:.6f})\n{decay_type}', fontsize=14)
+        ax_lr.grid(True, alpha=0.3)
+        ax_lr.set_yscale('log')  # Log scale makes the decay more visible
+        plt.tight_layout()
+        
+        if save_prefix:
+            fig_lr.savefig(f'{save_prefix}_best_lr_decay.png', dpi=300, bbox_inches='tight')
+            print(f"    Saved: {save_prefix}_best_lr_decay.png")
+            plt.close(fig_lr)
+        else:
+            plt.show()
+    
+    return best_x, best_f, all_results
+
+
+def run_gradient_descent(func_str, start_values, initial_lr, decay_type, power, max_iterations, 
+                         show_plots=True, save_prefix=None,
+                         multi_start=False, num_starts=1, range_str="-5,5",
+                         noise_amount=0, noise_freq=10):
+    """
+    Run gradient descent with optional multi-start and noise
+    Parameters:
+    - All parameters from run_single_gradient_descent, plus:
+    - multi_start: Whether to use multi-start
+    - num_starts: Number of starts for multi-start
+    - range_str: Range for random starts
+    - noise_amount: Amount of random noise to add to LR
+    - noise_freq: How often to inject noise
+    """
+    
+    num_vars = len(start_values)
+    var_names = [f'x{i+1}' for i in range(num_vars)]
+    
+    # If multi-start is enabled
+    if multi_start and num_starts > 1:
+        return run_multi_start_gradient_descent(
+            func_str, start_values, initial_lr, decay_type, power, max_iterations,
+            num_starts, range_str, noise_amount, noise_freq, show_plots, save_prefix
+        )
+    
+    # Single run with optional noise
+    print(f"\nf({', '.join(var_names)}) = {func_str}")
+    print(f"Start: {', '.join([f'{v:.6f}' for v in start_values])}")
+    print(f"Initial Learning Rate: {initial_lr:.6f}")
+    print(f"Decay Schedule: {decay_type}")
+    if decay_type == 'inverse_power':
+        print(f"Power: {power:.4f}")
+    print(f"Max Iterations: {max_iterations}")
+    if noise_amount > 0:
+        print(f"Noise: {noise_amount} (every {noise_freq} iterations)")
+    print("=" * 70)
+    
+    # Print header
+    header = f"{'Iter':<6} | "
+    for name in var_names:
+        header += f"{name:<14} | "
+    header += f"{'f(x)':<14} | {'LR':<10}"
+    print(header)
+    print("-" * (6 + 16 * num_vars + 28))
+    
+    # Run single gradient descent - this now returns final_f as well
+    x, history, lr_history, final_f, noise_used = run_single_gradient_descent(
+        func_str, start_values, initial_lr, decay_type, power, max_iterations,
+        noise_amount, noise_freq, verbose=True
+    )
+    
+    # Final result - use final_f from run_single_gradient_descent instead of calling func(x)
     print("-" * (6 + 16 * num_vars + 28))
     print(f"FINAL RESULT:")
     for j, name in enumerate(var_names):
         print(f"  {name} = {x[j]:.10f}")
-    print(f"  f(x) = {func(x):.16f}")
-    print(f"  Final learning rate: {current_lr:.8f}")
+    print(f"  f(x) = {final_f:.16f}")  # Use final_f returned from run_single_gradient_descent
+    print(f"  Final learning rate: {lr_history[-1]:.8f}")
+    if noise_used > 0:
+        print(f"  Noise injections: {noise_used}")
     print("=" * 70)
     
-    # ----- VISUALIZATION SECTION -----
     if show_plots:
         
         # 3D Visualization (only for 2-dimensions)
@@ -590,7 +847,7 @@ def run_gradient_descent(func_str, start_values, initial_lr, decay_type, power, 
         ax_lr.set_ylabel('Learning Rate', fontsize=12)
         ax_lr.set_title(f'Learning Rate Decay ({decay_type})', fontsize=14)
         ax_lr.grid(True, alpha=0.3)
-        ax_lr.set_yscale('log')  # Log scale makes the decay more visible
+        ax_lr.set_yscale('log')
         plt.tight_layout()
         
         if save_prefix:
@@ -605,13 +862,10 @@ def run_gradient_descent(func_str, start_values, initial_lr, decay_type, power, 
 
 def gradient_descent_interactive(args=None):
     """
-    Run gradient descent, either interactively or from command-line arguments.
-    
+    Run gradient descent, either interactively or from command-line arguments
     Parameters:
     - args: Parsed command-line arguments (optional)
     """
-    
-    # ---- SETUP: Interactive or Command-Line ----
     if args and args.function and args.start:
         # Command-line mode
         func_str = args.function
@@ -621,6 +875,15 @@ def gradient_descent_interactive(args=None):
         max_iterations = args.iterations
         show_plots = not args.no_plots
         save_prefix = args.save
+        
+        # Multi-start settings
+        multi_start = args.multi is not None and args.multi > 1
+        num_starts = args.multi if multi_start else 1
+        range_str = args.range
+        
+        # Noise settings
+        noise_amount = args.noise if args.noise is not None else 0
+        noise_freq = args.noise_freq
         
         # Suggest LR if not provided
         if args.learning_rate is None:
@@ -635,24 +898,27 @@ def gradient_descent_interactive(args=None):
         print(f"   Learning Rate: {initial_lr}")
         print(f"   Decay: {decay_type}")
         print(f"   Iterations: {max_iterations}")
+        if multi_start:
+            print(f"   Multi-start: {num_starts} runs, range: {range_str}")
+        if noise_amount > 0:
+            print(f"   Noise: {noise_amount} (every {noise_freq} iterations)")
         print("-" * 70)
         
         # Run gradient descent
         return run_gradient_descent(
             func_str, start_values, initial_lr, decay_type, 
-            power, max_iterations, show_plots, save_prefix
+            power, max_iterations, show_plots, save_prefix,
+            multi_start, num_starts, range_str,
+            noise_amount, noise_freq
         )
     
     else:
         # Interactive mode
-        print("Gradient Descent Visualizer")
-        print("-" * 70)
         print("\nHow to enter multi-variable functions:")
         print("  - Use x1, x2, x3, ... for any number of variables")
         print("  - Example (2D): x1**2 + x2**2")
         print("  - Example (3D): x1**2 + x2**2 + x3**2")
-        print("  - Example (4D): x1**2 + x2**2 + x3**2 + x4**2")
-        print("  - Example: (x1 - 2)**2 + (x2 - 1)**2 + (x3 + 3)**2")
+        print("  - Example: (x1 - 2)**2 + (x2 - 1)**2")
         print("-" * 70)
         
         # Get user input with validation
@@ -663,7 +929,7 @@ def gradient_descent_interactive(args=None):
         )
         
         start_str = safe_get_input(
-            "Enter starting values (comma-separated, e.g., 3, 4, 5): ",
+            "Enter starting values (comma-separated, e.g., 3, 4): ",
             validation=lambda s: len(s.split(',')) >= 2 and all(
                 x.strip().replace('-','').replace('.','').isdigit() 
                 for x in s.split(',')
@@ -674,11 +940,94 @@ def gradient_descent_interactive(args=None):
         # Parse starting values
         start_values = [float(x.strip()) for x in start_str.split(',')]
         num_vars = len(start_values)
-        
-        # Create variable names dynamically
         var_names = [f'x{i+1}' for i in range(num_vars)]
         
         print(f"\n    Detected {num_vars} variables: {', '.join(var_names)}")
+        
+        print("\n" + "-" * 70)
+        print("Local Minima Escape Strategies")
+        print("-" * 70)
+        print("  You can enable these to help find the global minimum:")
+        print("  1. Multi-start: Run GD from multiple random starting points")
+        print("  2. Noise: Add random jumps to the learning rate to escape local minima")
+        print("  3. Neither: Just run a single GD from your starting point")
+        print("  (Note: You can combine Multi-start with Noise by choosing option 1)")
+        
+        strategy_choice = safe_get_input(
+            "\nChoose strategy (1 = Multi-start, 2 = Noise, 3 = Neither, default = 3): ",
+            validation=lambda x: x in ['1', '2', '3', ''],
+            error_msg="Enter 1, 2, 3, or press Enter for default."
+        )
+        
+        multi_start = False
+        num_starts = 1
+        range_str = "-5,5"
+        noise_amount = 0
+        noise_freq = 10
+        
+        if strategy_choice == '1':
+            # Multi-start (with optional noise)
+            multi_start = True
+            num_starts = safe_get_input(
+                "Number of random starts (e.g., 10): ",
+                input_type=int,
+                validation=lambda x: x > 1,
+                error_msg="Must be greater than 1."
+            )
+            range_str = safe_get_input(
+                "Range for random starts (e.g., -5,5 or -10,10): ",
+                validation=lambda s: len(s.split(',')) == 2 and all(
+                    x.strip().replace('-','').replace('.','').isdigit() 
+                    for x in s.split(',')
+                ),
+                error_msg="Enter two numbers separated by comma (e.g., -5,5)"
+            )
+            
+            # Ask if they want noise with multi-start
+            use_noise = safe_get_input(
+                "\nAdd noise to help escape local minima during each run? (y/n, default = n): ",
+                validation=lambda x: x in ['y', 'n', ''],
+                error_msg="Enter y or n."
+            )
+            if use_noise == 'y':
+                noise_amount = safe_get_input(
+                    "Noise amount (e.g., 0.5 means ±50% random variation): ",
+                    input_type=float,
+                    validation=lambda x: x > 0,
+                    error_msg="Noise amount must be positive."
+                )
+                noise_freq = safe_get_input(
+                    "Inject noise every N iterations (e.g., 10): ",
+                    input_type=int,
+                    validation=lambda x: x > 0,
+                    error_msg="Must be positive integer."
+                )
+            
+        elif strategy_choice == '2':
+            # Noise only (single run)
+            multi_start = False
+            num_starts = 1
+            range_str = "-5,5"
+            noise_amount = safe_get_input(
+                "Noise amount (e.g., 0.5 means ±50% random variation): ",
+                input_type=float,
+                validation=lambda x: x > 0,
+                error_msg="Noise amount must be positive."
+            )
+            noise_freq = safe_get_input(
+                "Inject noise every N iterations (e.g., 10): ",
+                input_type=int,
+                validation=lambda x: x > 0,
+                error_msg="Must be positive integer."
+            )
+            
+        else:
+            # Neither (default)
+            multi_start = False
+            num_starts = 1
+            range_str = "-5,5"
+            noise_amount = 0
+            noise_freq = 10
         
         # Suggest initial learning rate
         suggested_lr, reason = suggest_learning_rate(func_str, start_values)
@@ -730,10 +1079,27 @@ def gradient_descent_interactive(args=None):
         show_plots = True
         save_prefix = None
         
+        # Print summary of what's being run
+        print("\n" + "=" * 70)
+        print("RUN SUMMARY")
+        print("=" * 70)
+        print(f"Function: {func_str}")
+        print(f"Start: {start_values}")
+        if multi_start:
+            print(f"Multi-start: {num_starts} runs, range: {range_str}")
+        if noise_amount > 0:
+            print(f"Noise: {noise_amount} (every {noise_freq} iterations)")
+        print(f"Learning Rate: {initial_lr}")
+        print(f"Decay: {decay_type}")
+        print(f"Iterations: {max_iterations}")
+        print("=" * 70)
+        
         # Run gradient descent
         return run_gradient_descent(
             func_str, start_values, initial_lr, decay_type, 
-            power, max_iterations, show_plots, save_prefix
+            power, max_iterations, show_plots, save_prefix,
+            multi_start, num_starts, range_str,
+            noise_amount, noise_freq
         )
 
 
@@ -746,7 +1112,7 @@ if __name__ == "__main__":
     except ImportError:
         print("\n      Required libraries not installed.")
         print("   Please install them with:")
-        print("   pip install numpy matplotlib argparse")
+        print("   pip install numpy matplotlib")
         print("\nThe gradient descent will still work, but visualizations won't.")
         print("-" * 70)
     
