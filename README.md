@@ -1,6 +1,6 @@
 # Gradient Descent Visualizer
 
-A Python program that performs gradient descent on multi-dimensional functions with adaptive learning rates, 3D visualization, and advanced local minima escape strategies.
+A Python program that performs unconstrained projected gradient descent on multi-dimensional functions with adaptive learning rates, 3D visualization, and advanced local minima escape strategies.
 
 <div style="display: flex; overflow-x: auto; gap: 10px; padding: 10px 0;">
    <img width="1920" height="1200" alt="readme" src="https://github.com/user-attachments/assets/4d7aaebd-4487-496c-9c41-d0bf96c743e4" />
