@@ -76,11 +76,13 @@ Choose a local minima escape strategy (Multi-start, Noise, or Neither)
 Choose initial learning rate (or accept the suggestion)
 Pick a decay schedule (recommended: inverse)
 Set max iterations
-Command-Line Mode
+
+
+### Command-Line Mode
 
 Run the program with arguments for non-interactive use:
 
-bash
+```bash
 # Basic run
 python3 gradient.py -f "x1**2 + x2**2" -s "3,4" -lr 0.1 -i 50
 
@@ -92,82 +94,93 @@ python3 gradient.py -f "sin(x1)*cos(x2)" -s "1,1" --noise 0.5 --noise_freq 10
 
 # Both multi-start AND noise
 python3 gradient.py -f "sin(x1)*cos(x2)" --multi 10 --range=-5,5 --noise 0.3 --noise_freq 8
-Command-Line Options
+```
 
-Flag	Description	Example
--f, --function	Function to minimize	"x1**2 + x2**2"
--s, --start	Starting values (comma-separated)	"3, 4"
--lr, --learning_rate	Initial learning rate	0.1
--d, --decay	Decay schedule	inverse, inverse_sqrt, inverse_power
--p, --power	Power for inverse_power decay	0.75
--i, --iterations	Max iterations	100
---multi	Number of random starts	10
---range	Range for random starts	--range=-5,5
---noise	Noise amount	0.5
---noise_freq	Noise frequency	10
---no-plots	Disable plotting	(flag)
---save	Save plots with prefix	"my_run"
-Examples
+### Command-Line Options
 
-Interactive Example
+| Flag | Description | Example |
+|------|-------------|---------|
+| `-f, --function` | Function to minimize | `"x1**2 + x2**2"` |
+| `-s, --start` | Starting values (comma-separated) | `"3, 4"` |
+| `-lr, --learning_rate` | Initial learning rate | `0.1` |
+| `-d, --decay` | Decay schedule | `inverse`, `inverse_sqrt`, `inverse_power` |
+| `-p, --power` | Power for inverse_power decay | `0.75` |
+| `-i, --iterations` | Max iterations | `100` |
+| `--multi` | Number of random starts | `10` |
+| `--range` | Range for random starts | `--range=-5,5` |
+| `--noise` | Noise amount | `0.5` |
+| `--noise_freq` | Noise frequency | `10` |
+| `--no-plots` | Disable plotting | (flag) |
+| `--save` | Save plots with prefix | `"my_run"` |
 
-text
+#### Interactive Example
+
+```
 Enter your function: x1**2 + x2**2
 Enter starting values: 3, 4
 Use suggested learning rate? y
 Choose decay schedule: 1
 Max iterations: 50
-Multi-Start Example
+```
 
-bash
+#### Multi-Start Example
+
+```bash
 # Find the global minimum of a wavy function with 10 starts
 python3 gradient.py -f "sin(x1)*cos(x2)" --multi 10 --range=-5,5 --noise 0.3 --noise_freq 8
-Visualizations
+```
 
-Single Run
+### Visualizations
 
-3D Plot: Shows the loss surface with the descent path (start=green, end=blue)
-Convergence Plot: Shows how each variable changes over iterations
-LR Decay Plot: Shows the learning rate decreasing over time
-Multi-Start
+#### Single Run
+- **3D Plot**: Shows the loss surface with the descent path (start=green, end=blue)
+- **Convergence Plot**: Shows how each variable changes over iterations
+- **LR Decay Plot**: Shows the learning rate decreasing over time
 
-Best Run Convergence: Shows the convergence of the best run
-Best Run LR Decay: Learning rate decay for the best run
-Best Non-Clamping Run: If clamping occurred, shows the best run that stayed within bounds
-3D Trajectory Plot: Shows all trajectories in different colors, with the best path in gold
-All plots can be saved as PNG files using the --save flag.
+#### Multi-Start
+- **Best Run Convergence**: Shows the convergence of the best run
+- **Best Run LR Decay**: Learning rate decay for the best run
+- **Best Non-Clamping Run**: If clamping occurred, shows the best run that stayed within bounds
+- **3D Trajectory Plot**: Shows all trajectories in different colors, with the best path in gold
 
-Learning Rate Decay
+All plots can be saved as PNG files using the `--save` flag.
+
+### Learning Rate Decay
 
 The program uses diminishing learning rates that satisfy:
 
-∑ηₙ = ∞ (enough total step length to reach the minimum)
-∑ηₙ² < ∞ (steps get small enough to stop bouncing)
+- ∑ηₙ = ∞ (enough total step length to reach the minimum)
+- ∑ηₙ² < ∞ (steps get small enough to stop bouncing)
+
 Three schedules are available:
 
-inverse: ηₙ = η₀/(1 + η₀·n) — Recommended for most problems
-inverse_sqrt: ηₙ = η₀/√n — Common in deep learning
-inverse_power: ηₙ = η₀/n^p — Customizable decay rate
-Function Syntax
+1. **inverse**: ηₙ = η₀/(1 + η₀·n) — Recommended for most problems
+2. **inverse_sqrt**: ηₙ = η₀/√n — Common in deep learning
+3. **inverse_power**: ηₙ = η₀/n^p — Customizable decay rate
 
-Math	Type This
-x₁²	x1**2
-(x₁ - 2)²	(x1 - 2)**2
-sin(x₁) + cos(x₂)	sin(x1) + cos(x2)
-x₁² + x₂² + x₃²	x1**2 + x2**2 + x3**2
-Tips for Finding Global Minima
+### Function Syntax
 
-Use Multi-start: For functions with many local minima, run with --multi 20 or more starts
-Add Noise: Combine multi-start with noise for even better exploration: --multi 20 --noise 0.3
-Wide Range: Use a larger range like --range=-10,10 to explore more of the function
-Check Plots: The 3D visualization shows all trajectories, helping you understand the function's landscape
-Clamping: If you see clamping events in the summary, try increasing the range or using a smaller learning rate
-Notes
+| Math | Type This |
+|------|-----------|
+| x₁² | `x1**2` |
+| (x₁ - 2)² | `(x1 - 2)**2` |
+| sin(x₁) + cos(x₂) | `sin(x1) + cos(x2)` |
+| x₁² + x₂² + x₃² | `x1**2 + x2**2 + x3**2` |
 
-Works with any number of dimensions (2D gets 3D visualization)
-The inverse decay schedule is recommended for most problems
-If values explode, try a smaller initial learning rate
-The algorithm automatically detects the number of variables from your input
-All plots can be saved as PNG files using the --save flag
-Clamping events are tracked and displayed when using multi-start with a range
-The best non-clamping run is shown when clamping occurs
+### Tips for Finding Global Minima
+
+1. **Use Multi-start**: For functions with many local minima, run with `--multi 20` or more starts
+2. **Add Noise**: Combine multi-start with noise for even better exploration: `--multi 20 --noise 0.3`
+3. **Wide Range**: Use a larger range like `--range=-10,10` to explore more of the function
+4. **Check Plots**: The 3D visualization shows all trajectories, helping you understand the function's landscape
+5. **Clamping**: If you see clamping events in the summary, try increasing the range or using a smaller learning rate
+
+### Notes
+
+- Works with any number of dimensions (2D gets 3D visualization)
+- The inverse decay schedule is recommended for most problems
+- If values explode, try a smaller initial learning rate
+- The algorithm automatically detects the number of variables from your input
+- All plots can be saved as PNG files using the `--save` flag
+- Clamping events are tracked and displayed when using multi-start with a range
+- The best non-clamping run is shown when clamping occurs
