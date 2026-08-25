@@ -4,6 +4,9 @@ import random
 import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
+import matplotlib.animation as animation
+from matplotlib.colors import Normalize
+import matplotlib.cm as cm
 
 
 class LossSurface:
@@ -61,30 +64,26 @@ class LossSurface:
                 except Exception:
                     self.Z[i, j] = np.nan
     
-    def plot_3d(self, trajectory=None, title=None):
+    def plot_3d_simple(self, trajectory=None, title=None, save_path=None):
         """
-        Create a 3D surface plot of the loss surface with trajectory
+        Create a 3D surface plot of the loss surface with a simple red trajectory.
+        (No color gradient for better performance)
+        
         Parameters:
         - trajectory: List of (x1, x2) points from gradient descent
         - title: Optional title for the plot
+        - save_path: Optional path to save the figure
         """
-        fig = plt.figure(figsize=(12, 8))
+        fig = plt.figure(figsize=(14, 10))
         ax = fig.add_subplot(111, projection='3d')
         
-        # Plot the surface with nan handling
-        # Replace nan with a large number for plotting, or mask them
+        # Plot the surface
         Z_masked = np.ma.masked_invalid(self.Z)
-        
-        # Plot the surface with clipped values to avoid extreme ranges
-        vmin = -1e10 if not np.isnan(self.Z).all() else -1
-        vmax = 1e10 if not np.isnan(self.Z).all() else 1
-        
         surf = ax.plot_surface(self.X1, self.X2, Z_masked, cmap='viridis', 
-                               alpha=0.8, linewidth=0, antialiased=True,
-                               vmin=vmin, vmax=vmax)
+                               alpha=0.7, linewidth=0, antialiased=True)
         fig.colorbar(surf, ax=ax, shrink=0.5, aspect=5, label='f(x)')
         
-        # Overlay the trajectory if provided
+        # Overlay the trajectory with a simple red line
         if trajectory:
             traj_x1 = [p[0] for p in trajectory]
             traj_x2 = [p[1] for p in trajectory]
@@ -98,41 +97,179 @@ class LossSurface:
                 traj_z = [traj_z[i] for i in valid_indices]
                 
                 # Plot the path as a red line
-                ax.plot(traj_x1, traj_x2, traj_z, 'r-', linewidth=3, label='Path')
+                ax.plot(traj_x1, traj_x2, traj_z, 'r-', linewidth=3, alpha=0.8, label='Path')
                 
                 # Plot start point (green)
                 ax.scatter(traj_x1[0], traj_x2[0], traj_z[0], 
-                          color='green', s=100, label='Start')
+                          color='green', s=120, label='Start', edgecolor='black', linewidth=1)
                 
                 # Plot end point (blue)
                 ax.scatter(traj_x1[-1], traj_x2[-1], traj_z[-1], 
-                          color='blue', s=100, label='End')
+                          color='blue', s=120, label='End', edgecolor='black', linewidth=1)
         
         ax.set_xlabel('x1', fontsize=12)
         ax.set_ylabel('x2', fontsize=12)
         ax.set_zlabel('f(x1, x2)', fontsize=12)
         
-        # Set z-axis limits to avoid extreme values
+        # Set z-axis limits
         Z_finite = self.Z[np.isfinite(self.Z)]
         if len(Z_finite) > 0:
-            z_min, z_max = np.percentile(Z_finite, [1, 99])  # Use percentiles to avoid outliers
+            z_min, z_max = np.percentile(Z_finite, [1, 99])
             if z_min == z_max:
-                z_min, z_max = -10, 10  # Fallback range
+                z_min, z_max = -10, 10
             ax.set_zlim(z_min, z_max)
         
         if title:
             ax.set_title(title, fontsize=14)
         else:
-            ax.set_title(f'f(x1, x2) = {self.func_str}', fontsize=14)
+            ax.set_title(f'Gradient Descent Path\n{self.func_str}', fontsize=14)
         
-        if trajectory:
-            ax.legend()
-        
-        # Set viewing angle
+        ax.legend()
         ax.view_init(elev=25, azim=-60)
-        
         plt.tight_layout()
+        
+        if save_path:
+            fig.savefig(save_path, dpi=300, bbox_inches='tight')
+            print(f"    Saved: {save_path}")
+        
         return fig, ax
+    
+    def plot_2d_with_color_gradient(self, trajectory=None, title=None, save_path=None):
+        """
+        Create a 2D contour plot with color gradient trajectory.
+        
+        Parameters:
+        - trajectory: List of (x1, x2) points from gradient descent
+        - title: Optional title for the plot
+        - save_path: Optional path to save the figure
+        """
+        fig, ax = plt.subplots(figsize=(10, 8))
+        
+        # Plot objective contours
+        Z_masked = np.ma.masked_invalid(self.Z)
+        cp = ax.contour(self.X1, self.X2, Z_masked, 30, cmap='viridis', alpha=0.6)
+        fig.colorbar(cp, ax=ax, label='f(x)')
+        
+        # Overlay the trajectory with color gradient
+        if trajectory:
+            traj_x1 = [p[0] for p in trajectory]
+            traj_x2 = [p[1] for p in trajectory]
+            
+            # Use color gradient based on iteration number
+            colors = cm.plasma(np.linspace(0, 1, len(traj_x1)))
+            
+            # Plot the path with color gradient
+            for i in range(len(traj_x1) - 1):
+                ax.plot(traj_x1[i:i+2], traj_x2[i:i+2], color=colors[i], 
+                       linewidth=2.5, alpha=0.8)
+            
+            # Plot start point (green)
+            ax.scatter(traj_x1[0], traj_x2[0], color='green', s=120, 
+                      label='Start', edgecolor='black', linewidth=1, zorder=5)
+            
+            # Plot end point (red)
+            ax.scatter(traj_x1[-1], traj_x2[-1], color='red', s=120, 
+                      label='End', edgecolor='black', linewidth=1, zorder=5)
+            
+            # Add colorbar for the trajectory
+            norm = Normalize(vmin=0, vmax=len(traj_x1) - 1)
+            sm = plt.cm.ScalarMappable(cmap='plasma', norm=norm)
+            sm.set_array([])
+            cbar = fig.colorbar(sm, ax=ax, shrink=0.3, aspect=10)
+            cbar.set_label('Iteration Progress', fontsize=10)
+        
+        ax.set_xlabel('x1', fontsize=12)
+        ax.set_ylabel('x2', fontsize=12)
+        ax.grid(True, alpha=0.3)
+        
+        if title:
+            ax.set_title(title, fontsize=14)
+        else:
+            ax.set_title(f'Gradient Descent Path with Color Gradient\n{self.func_str}', fontsize=14)
+        
+        ax.legend(loc='upper right')
+        plt.tight_layout()
+        
+        if save_path:
+            fig.savefig(save_path, dpi=300, bbox_inches='tight')
+            print(f"    Saved: {save_path}")
+        
+        return fig, ax
+    
+    def create_animation(self, trajectory, title=None, save_path=None, interval=200):
+        """
+        Create an animated visualization of the gradient descent path.
+        
+        Parameters:
+        - trajectory: List of (x1, x2) points from gradient descent
+        - title: Optional title for the plot
+        - save_path: Optional path to save the animation (e.g., "animation.gif")
+        - interval: Time between frames in milliseconds
+        """
+        fig, ax = plt.subplots(figsize=(10, 8))
+        
+        # Plot objective contours
+        Z_masked = np.ma.masked_invalid(self.Z)
+        cp = ax.contour(self.X1, self.X2, Z_masked, 30, cmap='viridis', alpha=0.6)
+        fig.colorbar(cp, ax=ax, label='f(x)')
+        
+        traj_x1 = [p[0] for p in trajectory]
+        traj_x2 = [p[1] for p in trajectory]
+        
+        # Set limits
+        x_min, x_max = min(traj_x1) - 0.5, max(traj_x1) + 0.5
+        y_min, y_max = min(traj_x2) - 0.5, max(traj_x2) + 0.5
+        ax.set_xlim(x_min, x_max)
+        ax.set_ylim(y_min, y_max)
+        
+        ax.set_xlabel('x1', fontsize=12)
+        ax.set_ylabel('x2', fontsize=12)
+        ax.grid(True, alpha=0.3)
+        
+        if title:
+            ax.set_title(title, fontsize=14)
+        else:
+            ax.set_title(f'Gradient Descent Animation\n{self.func_str}', fontsize=14)
+        
+        # Initialize the plot elements
+        line, = ax.plot([], [], 'b-', linewidth=2.5, alpha=0.8)
+        point, = ax.plot([], [], 'ro', markersize=8)
+        progress_text = ax.text(0.02, 0.98, '', transform=ax.transAxes, 
+                               verticalalignment='top', fontsize=12,
+                               bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
+        
+        # Determine color gradient for the path
+        colors = cm.plasma(np.linspace(0, 1, len(traj_x1)))
+        
+        def init():
+            line.set_data([], [])
+            point.set_data([], [])
+            progress_text.set_text('')
+            return line, point, progress_text
+        
+        def animate(frame):
+            # Update the path up to current frame
+            line.set_data(traj_x1[:frame+1], traj_x2[:frame+1])
+            line.set_color(colors[frame % len(colors)])
+            
+            # Update the current point
+            point.set_data([traj_x1[frame]], [traj_x2[frame]])
+            
+            # Update progress text
+            progress_text.set_text(f'Iteration: {frame + 1}/{len(traj_x1)}')
+            
+            return line, point, progress_text
+        
+        anim = animation.FuncAnimation(fig, animate, init_func=init, 
+                                      frames=len(trajectory), interval=interval, 
+                                      blit=True)
+        
+        if save_path:
+            # Save as GIF
+            anim.save(save_path, writer='pillow', fps=1000/interval)
+            print(f"    Saved animation: {save_path}")
+        
+        return anim, fig, ax
     
     def evaluate_point(self, x1, x2):
         # Evaluate the function at a single point with overflow protection
@@ -153,21 +290,15 @@ class LossSurface:
 def parse_arguments():
     # Parse command-line arguments for non-interactive mode
     parser = argparse.ArgumentParser(
-        description='Gradient Descent Visualizer',
+        description='Gradient Descent Visualizer with Color Gradient and Animation',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
-  # Basic run
+  # Basic run with color gradient
   python gradient.py -f "x1**2 + x2**2" -s "3,4" -lr 0.1 -i 50
   
-  # Multi-start (10 random starts in range [-5,5])
-  python gradient.py -f "sin(x1)*cos(x2)" --multi 10 --range=-5,5
-  
-  # With noise (adds random jumps to escape local minima)
-  python gradient.py -f "sin(x1)*cos(x2)" -s "1,1" --noise 0.5 --noise_freq 10
-  
-  # Both multi-start AND noise
-  python gradient.py -f "sin(x1)*cos(x2)" --multi 10 --range=-5,5 --noise 0.3 --noise_freq 8
+  # Multi-start with color gradient and animation
+  python gradient.py -f "sin(x1)*cos(x2)" --multi 10 --range=-5,5 --animate
         """
     )
     parser.add_argument(
@@ -238,6 +369,12 @@ Examples:
         type=int,
         default=10,
         help='Frequency of noise injection (every N iterations, default: 10)'
+    )
+    # NEW: Animation flag
+    parser.add_argument(
+        '--animate',
+        action='store_true',
+        help='Create an animated GIF of the descent path'
     )
     return parser.parse_args()
 
@@ -885,62 +1022,26 @@ def run_multi_start_gradient_descent(func_str, start_values, initial_lr, decay_t
                 x1_range = (min_val - 0.5, max_val + 0.5)
                 x2_range = (min_val - 0.5, max_val + 0.5)
                 
-                print("\n[5/5] Generating 3D visualization with all trajectories...")
+                print("\n[5/5] Generating 3D visualization...")
                 
                 ls = LossSurface(func_str, x1_range, x2_range)
                 
-                fig = plt.figure(figsize=(12, 8))
-                ax = fig.add_subplot(111, projection='3d')
-                
-                surf = ax.plot_surface(ls.X1, ls.X2, ls.Z, cmap='viridis', 
-                                       alpha=0.6, linewidth=0, antialiased=True)
-                fig.colorbar(surf, ax=ax, shrink=0.5, aspect=5, label='f(x)')
-                
-                colors = ['red', 'orange', 'yellow', 'green', 'blue', 'purple', 'pink', 'brown']
-                for i, result in enumerate(all_results):
-                    traj_x1 = [p[0] for p in result['history']]
-                    traj_x2 = [p[1] for p in result['history']]
-                    traj_z = [ls.evaluate_point(p[0], p[1]) for p in result['history']]
-                    color = colors[i % len(colors)]
-                    ax.plot(traj_x1, traj_x2, traj_z, '-', color=color, linewidth=1.5, alpha=0.7)
-                    ax.scatter(traj_x1[0], traj_x2[0], traj_z[0], 
-                              color=color, s=30, marker='o')
-                
+                # Use the best trajectory for the simple 3D plot
                 if best_history:
-                    best_traj_x1 = [p[0] for p in best_history]
-                    best_traj_x2 = [p[1] for p in best_history]
-                    best_traj_z = [ls.evaluate_point(p[0], p[1]) for p in best_history]
-                    ax.plot(best_traj_x1, best_traj_x2, best_traj_z, 'gold', linewidth=3, label='BEST Path')
-                    ax.scatter(best_traj_x1[-1], best_traj_x2[-1], best_traj_z[-1], 
-                              color='gold', s=150, marker='*', label='BEST End')
+                    fig_3d, ax_3d = ls.plot_3d_simple(
+                        trajectory=best_history,
+                        title=f'Best Run: f(x) = {best_f:.6f}\n{func_str}',
+                        save_path=f'{save_prefix}_3d.png' if save_prefix else None
+                    )
+                    plt.show()
                 
-                x_range_vals = [min_val, max_val]
-                y_range_vals = [min_val, max_val]
-                z_min, z_max = ax.get_zlim()
-                
-                for x_bound in x_range_vals:
-                    ax.plot([x_bound, x_bound], [min_val, max_val], [z_min, z_min], 
-                           'k--', alpha=0.3, linewidth=0.5)
-                for y_bound in y_range_vals:
-                    ax.plot([min_val, max_val], [y_bound, y_bound], [z_min, z_min], 
-                           'k--', alpha=0.3, linewidth=0.5)
-                
-                ax.set_xlabel('x1', fontsize=12)
-                ax.set_ylabel('x2', fontsize=12)
-                ax.set_zlabel('f(x1, x2)', fontsize=12)
-                
-                title_text = f'Multi-start Gradient Descent\n{num_starts} runs, Best in Gold'
-                if total_clamps > 0:
-                    title_text += f'\n  Clamping events: {total_clamps} (range [{min_val}, {max_val}])'
-                ax.set_title(title_text, fontsize=14)
-                ax.legend()
-                ax.view_init(elev=25, azim=-60)
-                plt.tight_layout()
-                
-                if save_prefix:
-                    fig.savefig(f'{save_prefix}_multi_start_3d.png', dpi=300, bbox_inches='tight')
-                    print(f"    Saved: {save_prefix}_multi_start_3d.png")
-                else:
+                # Also show 2D color gradient
+                if best_history:
+                    fig_2d, ax_2d = ls.plot_2d_with_color_gradient(
+                        trajectory=best_history,
+                        title=f'Best Run: f(x) = {best_f:.6f}\n{func_str}',
+                        save_path=f'{save_prefix}_2d_color.png' if save_prefix else None
+                    )
                     plt.show()
         else:
             print("\n[5/5] Skipping 3D visualization (requires 2 variables)")
@@ -951,7 +1052,8 @@ def run_multi_start_gradient_descent(func_str, start_values, initial_lr, decay_t
 def run_gradient_descent(func_str, start_values, initial_lr, decay_type, power, max_iterations, 
                          show_plots=True, save_prefix=None,
                          multi_start=False, num_starts=1, range_str="-5,5",
-                         noise_amount=0, noise_freq=10):
+                         noise_amount=0, noise_freq=10,
+                         animate=False):
     """
     Run gradient descent with optional multi-start and noise
     Parameters:
@@ -961,6 +1063,7 @@ def run_gradient_descent(func_str, start_values, initial_lr, decay_type, power, 
     - range_str: Range for random starts
     - noise_amount: Amount of random noise to add to LR
     - noise_freq: How often to inject noise
+    - animate: Whether to create an animation
     """
     
     num_vars = len(start_values)
@@ -985,7 +1088,6 @@ def run_gradient_descent(func_str, start_values, initial_lr, decay_type, power, 
         print(f"Noise: {noise_amount} (every {noise_freq} iterations)")
     
     # Check if we should use clamping for single run
-    # Use clamping if range_str is not the default value or if user explicitly set it
     clamp_range = None
     if range_str != "-5,5":
         clamp_range = range_str
@@ -1000,7 +1102,7 @@ def run_gradient_descent(func_str, start_values, initial_lr, decay_type, power, 
     print(header)
     print("-" * (6 + 16 * num_vars + 28))
     
-    # Run single gradient descent - now returns extra clamp_active
+    # Run single gradient descent
     x, history, lr_history, final_f, noise_used, clamp_count, clamp_history, clamp_active = run_single_gradient_descent(
         func_str, start_values, initial_lr, decay_type, power, max_iterations,
         noise_amount, noise_freq, verbose=True,
@@ -1020,77 +1122,84 @@ def run_gradient_descent(func_str, start_values, initial_lr, decay_type, power, 
         print(f"    Clamping events: {clamp_count}")
     print("-" * 70)
     
-    # Show individual graphs for single run (always show)
+    # Show individual graphs for single run
     if show_plots:
-        # Always show individual convergence and learning rate plots for single run
-        print("\n[1/2] Generating convergence plot...")
-        fig, ax = plot_convergence_multi(
-            history=history,
-            var_names=var_names,
-            title=f'Convergence of Variables\n{func_str}'
-        )
-        
-        if save_prefix:
-            fig.savefig(f'{save_prefix}_convergence.png', dpi=300, bbox_inches='tight')
-            print(f"    Saved: {save_prefix}_convergence.png")
-        else:
-            plt.show()
-        
-        print("\n[2/2] Generating learning rate decay plot...")
-        fig_lr, ax_lr = plt.subplots(figsize=(10, 6))
-        ax_lr.plot(range(len(lr_history)), lr_history, 'b-', linewidth=2)
-        ax_lr.set_xlabel('Iteration', fontsize=12)
-        ax_lr.set_ylabel('Learning Rate', fontsize=12)
-        ax_lr.set_title(f'Learning Rate Decay ({decay_type})', fontsize=14)
-        ax_lr.grid(True, alpha=0.3)
-        ax_lr.set_yscale('log')
-        plt.tight_layout()
-        
-        if save_prefix:
-            fig_lr.savefig(f'{save_prefix}_lr_decay.png', dpi=300, bbox_inches='tight')
-            print(f"    Saved: {save_prefix}_lr_decay.png")
-            plt.close(fig_lr)
-        else:
-            plt.show()
-        
-        # 3D Visualization (only for 2-dimensions)
+        # Determine appropriate axis ranges for 2D plots
         if num_vars == 2:
-            # Determine appropriate axis ranges based on the trajectory
             x1_values = [p[0] for p in history]
             x2_values = [p[1] for p in history]
             
-            # If values exploded, limit the range for visualization
-            x1_max_abs = max(abs(min(x1_values)), abs(max(x1_values)))
-            x2_max_abs = max(abs(min(x2_values)), abs(max(x2_values)))
+            x1_min = min(x1_values) - 0.5
+            x1_max = max(x1_values) + 0.5
+            x2_min = min(x2_values) - 0.5
+            x2_max = max(x2_values) + 0.5
             
-            if x1_max_abs > 10 or x2_max_abs > 10:
-                print("\n      Values exploded! Limiting visualization range to [-10, 10].")
-                x1_range = (-10, 10)
-                x2_range = (-10, 10)
-            else:
-                x1_min = min(x1_values) - 0.5
-                x1_max = max(x1_values) + 0.5
-                x2_min = min(x2_values) - 0.5
-                x2_max = max(x2_values) + 0.5
-                
-                # Make sure the ranges are symmetric and reasonable
-                x1_range = (min(x1_min, -1), max(x1_max, 1))
-                x2_range = (min(x2_min, -1), max(x2_max, 1))
+            x1_range = (min(x1_min, -1), max(x1_max, 1))
+            x2_range = (min(x2_min, -1), max(x2_max, 1))
             
-            print("\n[3/3] Generating 3D visualization...")
-            
-            # Create the loss surface
+            # Create loss surface
             ls = LossSurface(func_str, x1_range, x2_range)
             
-            # Plot 3D surface with trajectory
-            fig_3d, ax_3d = ls.plot_3d(
+            # 1. 3D Simple Plot (no color gradient)
+            print("\n[1/4] Generating 3D visualization...")
+            fig_3d, ax_3d = ls.plot_3d_simple(
                 trajectory=history,
-                title=f'3D Gradient Descent Path\n{func_str}'
+                title=f'Gradient Descent Path\n{func_str}',
+                save_path=f'{save_prefix}_3d.png' if save_prefix else None
+            )
+            plt.show()
+            
+            # 2. 2D Color Gradient Plot
+            print("\n[2/4] Generating 2D color gradient visualization...")
+            fig_2d, ax_2d = ls.plot_2d_with_color_gradient(
+                trajectory=history,
+                title=f'Gradient Descent Path with Color Gradient\n{func_str}',
+                save_path=f'{save_prefix}_2d_color.png' if save_prefix else None
+            )
+            plt.show()
+            
+            # 3. Animation
+            if animate:
+                print("\n[3/4] Generating animation...")
+                anim, fig_anim, ax_anim = ls.create_animation(
+                    trajectory=history,
+                    title=f'Gradient Descent Animation\n{func_str}',
+                    save_path=f'{save_prefix}_animation.gif' if save_prefix else None,
+                    interval=200
+                )
+                plt.show()
+            else:
+                print("\n[3/4] Skipping animation (use --animate to enable)")
+            
+            # 4. Convergence plot
+            print("\n[4/4] Generating convergence plot...")
+            fig_conv, ax_conv = plot_convergence_multi(
+                history=history,
+                var_names=var_names,
+                title=f'Convergence of Variables\n{func_str}'
             )
             
             if save_prefix:
-                fig_3d.savefig(f'{save_prefix}_3d.png', dpi=300, bbox_inches='tight')
-                print(f"    Saved: {save_prefix}_3d.png")
+                fig_conv.savefig(f'{save_prefix}_convergence.png', dpi=300, bbox_inches='tight')
+                print(f"    Saved: {save_prefix}_convergence.png")
+            else:
+                plt.show()
+            
+            # 5. Learning rate decay plot
+            print("\n[5/5] Generating learning rate decay plot...")
+            fig_lr, ax_lr = plt.subplots(figsize=(10, 6))
+            ax_lr.plot(range(len(lr_history)), lr_history, 'b-', linewidth=2)
+            ax_lr.set_xlabel('Iteration', fontsize=12)
+            ax_lr.set_ylabel('Learning Rate', fontsize=12)
+            ax_lr.set_title(f'Learning Rate Decay ({decay_type})', fontsize=14)
+            ax_lr.grid(True, alpha=0.3)
+            ax_lr.set_yscale('log')
+            plt.tight_layout()
+            
+            if save_prefix:
+                fig_lr.savefig(f'{save_prefix}_lr_decay.png', dpi=300, bbox_inches='tight')
+                print(f"    Saved: {save_prefix}_lr_decay.png")
+                plt.close(fig_lr)
             else:
                 plt.show()
     
@@ -1122,6 +1231,9 @@ def gradient_descent_interactive(args=None):
         noise_amount = args.noise if args.noise is not None else 0
         noise_freq = args.noise_freq
         
+        # Animation setting
+        animate = args.animate
+        
         # Suggest LR if not provided
         if args.learning_rate is None:
             initial_lr, reason = suggest_learning_rate(func_str, start_values)
@@ -1139,6 +1251,8 @@ def gradient_descent_interactive(args=None):
             print(f"   Multi-start: {num_starts} runs, range: {range_str}")
         if noise_amount > 0:
             print(f"   Noise: {noise_amount} (every {noise_freq} iterations)")
+        if animate:
+            print(f"   Animation: Enabled")
         print("-" * 70)
         
         # Run gradient descent
@@ -1146,7 +1260,8 @@ def gradient_descent_interactive(args=None):
             func_str, start_values, initial_lr, decay_type, 
             power, max_iterations, show_plots, save_prefix,
             multi_start, num_starts, range_str,
-            noise_amount, noise_freq
+            noise_amount, noise_freq,
+            animate
         )
     
     else:
@@ -1266,6 +1381,14 @@ def gradient_descent_interactive(args=None):
             noise_amount = 0
             noise_freq = 10
         
+        # Ask about animation
+        animate_choice = safe_get_input(
+            "\nCreate an animated GIF of the descent? (y/n, default = n): ",
+            validation=lambda x: x in ['y', 'n', ''],
+            error_msg="Enter y or n."
+        )
+        animate = animate_choice == 'y'
+        
         # Suggest initial learning rate
         suggested_lr, reason = suggest_learning_rate(func_str, start_values)
         print(f"\n    Initial Learning Rate Suggestion: {suggested_lr}")
@@ -1329,6 +1452,8 @@ def gradient_descent_interactive(args=None):
         print(f"Learning Rate: {initial_lr}")
         print(f"Decay: {decay_type}")
         print(f"Iterations: {max_iterations}")
+        if animate:
+            print(f"Animation: Enabled")
         print("-" * 70)
         
         # Run gradient descent
@@ -1336,7 +1461,8 @@ def gradient_descent_interactive(args=None):
             func_str, start_values, initial_lr, decay_type, 
             power, max_iterations, show_plots, save_prefix,
             multi_start, num_starts, range_str,
-            noise_amount, noise_freq
+            noise_amount, noise_freq,
+            animate
         )
 
 
