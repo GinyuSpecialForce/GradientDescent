@@ -4,7 +4,6 @@ import random
 import numpy as np
 import matplotlib.pyplot as plt
 from mpl_toolkits.mplot3d import Axes3D
-import matplotlib.animation as animation
 from matplotlib.colors import Normalize
 import matplotlib.cm as cm
 
@@ -196,81 +195,6 @@ class LossSurface:
         
         return fig, ax
     
-    def create_animation(self, trajectory, title=None, save_path=None, interval=200):
-        """
-        Create an animated visualization of the gradient descent path.
-        
-        Parameters:
-        - trajectory: List of (x1, x2) points from gradient descent
-        - title: Optional title for the plot
-        - save_path: Optional path to save the animation (e.g., "animation.gif")
-        - interval: Time between frames in milliseconds
-        """
-        fig, ax = plt.subplots(figsize=(10, 8))
-        
-        # Plot objective contours
-        Z_masked = np.ma.masked_invalid(self.Z)
-        cp = ax.contour(self.X1, self.X2, Z_masked, 30, cmap='viridis', alpha=0.6)
-        fig.colorbar(cp, ax=ax, label='f(x)')
-        
-        traj_x1 = [p[0] for p in trajectory]
-        traj_x2 = [p[1] for p in trajectory]
-        
-        # Set limits
-        x_min, x_max = min(traj_x1) - 0.5, max(traj_x1) + 0.5
-        y_min, y_max = min(traj_x2) - 0.5, max(traj_x2) + 0.5
-        ax.set_xlim(x_min, x_max)
-        ax.set_ylim(y_min, y_max)
-        
-        ax.set_xlabel('x1', fontsize=12)
-        ax.set_ylabel('x2', fontsize=12)
-        ax.grid(True, alpha=0.3)
-        
-        if title:
-            ax.set_title(title, fontsize=14)
-        else:
-            ax.set_title(f'Gradient Descent Animation\n{self.func_str}', fontsize=14)
-        
-        # Initialize the plot elements
-        line, = ax.plot([], [], 'b-', linewidth=2.5, alpha=0.8)
-        point, = ax.plot([], [], 'ro', markersize=8)
-        progress_text = ax.text(0.02, 0.98, '', transform=ax.transAxes, 
-                               verticalalignment='top', fontsize=12,
-                               bbox=dict(boxstyle='round', facecolor='white', alpha=0.8))
-        
-        # Determine color gradient for the path
-        colors = cm.plasma(np.linspace(0, 1, len(traj_x1)))
-        
-        def init():
-            line.set_data([], [])
-            point.set_data([], [])
-            progress_text.set_text('')
-            return line, point, progress_text
-        
-        def animate(frame):
-            # Update the path up to current frame
-            line.set_data(traj_x1[:frame+1], traj_x2[:frame+1])
-            line.set_color(colors[frame % len(colors)])
-            
-            # Update the current point
-            point.set_data([traj_x1[frame]], [traj_x2[frame]])
-            
-            # Update progress text
-            progress_text.set_text(f'Iteration: {frame + 1}/{len(traj_x1)}')
-            
-            return line, point, progress_text
-        
-        anim = animation.FuncAnimation(fig, animate, init_func=init, 
-                                      frames=len(trajectory), interval=interval, 
-                                      blit=True)
-        
-        if save_path:
-            # Save as GIF
-            anim.save(save_path, writer='pillow', fps=1000/interval)
-            print(f"    Saved animation: {save_path}")
-        
-        return anim, fig, ax
-    
     def evaluate_point(self, x1, x2):
         # Evaluate the function at a single point with overflow protection
         try:
@@ -290,15 +214,15 @@ class LossSurface:
 def parse_arguments():
     # Parse command-line arguments for non-interactive mode
     parser = argparse.ArgumentParser(
-        description='Gradient Descent Visualizer with Color Gradient and Animation',
+        description='Gradient Descent Visualizer with Color Gradient',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="""
 Examples:
   # Basic run with color gradient
   python gradient.py -f "x1**2 + x2**2" -s "3,4" -lr 0.1 -i 50
   
-  # Multi-start with color gradient and animation
-  python gradient.py -f "sin(x1)*cos(x2)" --multi 10 --range=-5,5 --animate
+  # Multi-start with color gradient
+  python gradient.py -f "sin(x1)*cos(x2)" --multi 10 --range=-5,5
         """
     )
     parser.add_argument(
@@ -369,12 +293,6 @@ Examples:
         type=int,
         default=10,
         help='Frequency of noise injection (every N iterations, default: 10)'
-    )
-    # NEW: Animation flag
-    parser.add_argument(
-        '--animate',
-        action='store_true',
-        help='Create an animated GIF of the descent path'
     )
     return parser.parse_args()
 
@@ -644,6 +562,11 @@ def run_single_gradient_descent(func_str, start_values, initial_lr, decay_type, 
     clamp_count = 0  # Track total clamps
     clamp_history = [0]  # Track clamps per iteration
     
+    # Convergence tracking
+    converged = False
+    iterations_to_converge = max_iterations
+    final_grad_magnitude = 0
+    
     # Parse clamp range if provided
     clamp_min = None
     clamp_max = None
@@ -766,7 +689,10 @@ def run_single_gradient_descent(func_str, start_values, initial_lr, decay_type, 
         
         # Check for convergence
         grad_magnitude = math.sqrt(sum(g**2 for g in grad))
+        final_grad_magnitude = grad_magnitude
         if grad_magnitude < 1e-8:
+            converged = True
+            iterations_to_converge = i + 1
             if verbose:
                 print("-" * (6 + 16 * num_vars + 28))
                 print(f"    Converged after {i+1} iterations! (gradient magnitude = {grad_magnitude:.2e})")
@@ -784,7 +710,7 @@ def run_single_gradient_descent(func_str, start_values, initial_lr, decay_type, 
             break
     
     final_f = func(x)
-    return x, history, lr_history, final_f, noise_used, clamp_count, clamp_history, clamp_active
+    return x, history, lr_history, final_f, noise_used, clamp_count, clamp_history, clamp_active, converged, iterations_to_converge, final_grad_magnitude
 
 
 def run_multi_start_gradient_descent(func_str, start_values, initial_lr, decay_type, power, 
@@ -809,6 +735,10 @@ def run_multi_start_gradient_descent(func_str, start_values, initial_lr, decay_t
     best_history = None
     best_lr_history = None
     best_clamp_count = 0
+    best_converged = False
+    best_iterations = 0
+    best_grad_mag = 0
+    best_run_idx = -1
     all_results = []
     
     # Track best non-clamping run
@@ -820,6 +750,17 @@ def run_multi_start_gradient_descent(func_str, start_values, initial_lr, decay_t
     total_clamps = 0
     clamp_active = True
     
+    # Progress bar for multi-start
+    use_progress = False
+    pbar = None
+    if num_starts > 10:
+        try:
+            from tqdm import tqdm
+            pbar = tqdm(total=num_starts, desc="Multi-start progress")
+            use_progress = True
+        except ImportError:
+            print(f"  Running {num_starts} starts (no progress bar - install tqdm for progress)")
+    
     for run_num in range(num_starts):
         # Generate random starting point
         if run_num == 0:
@@ -827,11 +768,12 @@ def run_multi_start_gradient_descent(func_str, start_values, initial_lr, decay_t
         else:
             current_start = [random.uniform(min_val, max_val) for _ in range(num_vars)]
         
-        print(f"\n--- Run {run_num + 1}/{num_starts} ---")
-        print(f"Start: {', '.join([f'{v:.4f}' for v in current_start])}")
+        if not use_progress:
+            print(f"\n--- Run {run_num + 1}/{num_starts} ---")
+            print(f"Start: {', '.join([f'{v:.4f}' for v in current_start])}")
         
         # Run gradient descent with clamp range
-        x, history, lr_history, final_f, noise_used, clamp_count, clamp_history, clamp_active_local = run_single_gradient_descent(
+        x, history, lr_history, final_f, noise_used, clamp_count, clamp_history, clamp_active_local, converged, iters, grad_mag = run_single_gradient_descent(
             func_str, current_start, initial_lr, decay_type, power, max_iterations,
             noise_amount, noise_freq, verbose=False,
             clamp_range=range_str
@@ -840,9 +782,12 @@ def run_multi_start_gradient_descent(func_str, start_values, initial_lr, decay_t
         total_clamps += clamp_count
         
         # Print summary for this run
-        clamp_info = f"    Clamped {clamp_count} times" if clamp_count > 0 else "    No clamping needed"
-        print(f"  Final: {', '.join([f'{v:.4f}' for v in x])}  |  f(x) = {final_f:.6f}")
-        print(f"  {clamp_info}" + (f"    Noise used {noise_used} times" if noise_used > 0 else ""))
+        if not use_progress:
+            clamp_info = f"    Clamped {clamp_count} times" if clamp_count > 0 else "    No clamping needed"
+            converge_info = f"Converged: {'Yes' if converged else 'No'}"
+            print(f"  Final: {', '.join([f'{v:.4f}' for v in x])}  |  f(x) = {final_f:.6f}")
+            print(f"  {clamp_info}" + (f"    Noise used {noise_used} times" if noise_used > 0 else ""))
+            print(f"  {converge_info} ({iters} iterations, grad = {grad_mag:.2e})")
         
         # Store result
         result = {
@@ -855,7 +800,10 @@ def run_multi_start_gradient_descent(func_str, start_values, initial_lr, decay_t
             'clamp_count': clamp_count,
             'clamp_history': clamp_history,
             'clamp_active': clamp_active_local,
-            'run_num': run_num + 1
+            'run_num': run_num + 1,
+            'converged': converged,
+            'iterations': iters,
+            'grad_magnitude': grad_mag
         }
         all_results.append(result)
         
@@ -866,7 +814,12 @@ def run_multi_start_gradient_descent(func_str, start_values, initial_lr, decay_t
             best_history = history
             best_lr_history = lr_history
             best_clamp_count = clamp_count
-            print(f"      NEW BEST: f(x) = {best_f:.6f}")
+            best_converged = converged
+            best_iterations = iters
+            best_grad_mag = grad_mag
+            best_run_idx = run_num
+            if not use_progress:
+                print(f"      NEW BEST: f(x) = {best_f:.6f}")
         
         # Update best non-clamping run
         if clamp_count == 0 and final_f < best_non_clamp_f:
@@ -874,14 +827,27 @@ def run_multi_start_gradient_descent(func_str, start_values, initial_lr, decay_t
             best_non_clamp_x = x
             best_non_clamp_history = history
             best_non_clamp_lr_history = lr_history
-            if final_f < best_f:
+            if final_f < best_f and not use_progress:
                 print(f"      BEST NON-CLAMPING: f(x) = {best_non_clamp_f:.6f}")
+        
+        # Update progress bar
+        if use_progress and pbar is not None:
+            pbar.update(1)
+            pbar.set_postfix({'best': f'{best_f:.6f}'})
+    
+    if use_progress and pbar is not None:
+        pbar.close()
     
     # Print summary
-    print("Multi-start Summary")
+    print("\nMulti-start Summary")
     print("-" * 70)
     print(f"Best f(x): {best_f:.10f}")
     print(f"Best x: {', '.join([f'{v:.6f}' for v in best_x])}")
+    if best_run_idx >= 0:
+        print(f"Best run: {best_run_idx + 1}/{num_starts}")
+    print(f"Converged: {'Yes' if best_converged else 'No'}")
+    print(f"Iterations to converge: {best_iterations}")
+    print(f"Final gradient magnitude: {best_grad_mag:.2e}")
     print(f"Runs completed: {num_starts}")
     print(f"Total clamping events: {total_clamps}")
     if total_clamps > 0:
@@ -933,6 +899,8 @@ def run_multi_start_gradient_descent(func_str, start_values, initial_lr, decay_t
         title_text = f'Best Run Convergence (f(x) = {best_f:.6f})\n{func_str}'
         if best_clamp_count > 0:
             title_text += f'\n  Clamping events: {best_clamp_count}'
+        if best_converged:
+            title_text += f'\n  Converged after {best_iterations} iterations'
         ax_best.set_title(title_text, fontsize=14)
         plt.tight_layout()
         
@@ -1052,8 +1020,7 @@ def run_multi_start_gradient_descent(func_str, start_values, initial_lr, decay_t
 def run_gradient_descent(func_str, start_values, initial_lr, decay_type, power, max_iterations, 
                          show_plots=True, save_prefix=None,
                          multi_start=False, num_starts=1, range_str="-5,5",
-                         noise_amount=0, noise_freq=10,
-                         animate=False):
+                         noise_amount=0, noise_freq=10):
     """
     Run gradient descent with optional multi-start and noise
     Parameters:
@@ -1063,7 +1030,6 @@ def run_gradient_descent(func_str, start_values, initial_lr, decay_type, power, 
     - range_str: Range for random starts
     - noise_amount: Amount of random noise to add to LR
     - noise_freq: How often to inject noise
-    - animate: Whether to create an animation
     """
     
     num_vars = len(start_values)
@@ -1103,7 +1069,7 @@ def run_gradient_descent(func_str, start_values, initial_lr, decay_type, power, 
     print("-" * (6 + 16 * num_vars + 28))
     
     # Run single gradient descent
-    x, history, lr_history, final_f, noise_used, clamp_count, clamp_history, clamp_active = run_single_gradient_descent(
+    x, history, lr_history, final_f, noise_used, clamp_count, clamp_history, clamp_active, converged, iterations_to_converge, final_grad_magnitude = run_single_gradient_descent(
         func_str, start_values, initial_lr, decay_type, power, max_iterations,
         noise_amount, noise_freq, verbose=True,
         clamp_range=clamp_range
@@ -1120,6 +1086,12 @@ def run_gradient_descent(func_str, start_values, initial_lr, decay_type, power, 
         print(f"  Noise injections: {noise_used}")
     if clamp_count > 0:
         print(f"    Clamping events: {clamp_count}")
+    # Convergence statistics
+    if converged:
+        print(f"  ✓ Converged after {iterations_to_converge} iterations")
+    else:
+        print(f"  ✗ Did not converge (reached max iterations)")
+    print(f"  Final gradient magnitude: {final_grad_magnitude:.2e}")
     print("-" * 70)
     
     # Show individual graphs for single run
@@ -1158,21 +1130,8 @@ def run_gradient_descent(func_str, start_values, initial_lr, decay_type, power, 
             )
             plt.show()
             
-            # 3. Animation
-            if animate:
-                print("\n[3/4] Generating animation...")
-                anim, fig_anim, ax_anim = ls.create_animation(
-                    trajectory=history,
-                    title=f'Gradient Descent Animation\n{func_str}',
-                    save_path=f'{save_prefix}_animation.gif' if save_prefix else None,
-                    interval=200
-                )
-                plt.show()
-            else:
-                print("\n[3/4] Skipping animation (use --animate to enable)")
-            
-            # 4. Convergence plot
-            print("\n[4/4] Generating convergence plot...")
+            # 3. Convergence plot
+            print("\n[3/4] Generating convergence plot...")
             fig_conv, ax_conv = plot_convergence_multi(
                 history=history,
                 var_names=var_names,
@@ -1185,8 +1144,8 @@ def run_gradient_descent(func_str, start_values, initial_lr, decay_type, power, 
             else:
                 plt.show()
             
-            # 5. Learning rate decay plot
-            print("\n[5/5] Generating learning rate decay plot...")
+            # 4. Learning rate decay plot
+            print("\n[4/4] Generating learning rate decay plot...")
             fig_lr, ax_lr = plt.subplots(figsize=(10, 6))
             ax_lr.plot(range(len(lr_history)), lr_history, 'b-', linewidth=2)
             ax_lr.set_xlabel('Iteration', fontsize=12)
@@ -1231,9 +1190,6 @@ def gradient_descent_interactive(args=None):
         noise_amount = args.noise if args.noise is not None else 0
         noise_freq = args.noise_freq
         
-        # Animation setting
-        animate = args.animate
-        
         # Suggest LR if not provided
         if args.learning_rate is None:
             initial_lr, reason = suggest_learning_rate(func_str, start_values)
@@ -1251,8 +1207,6 @@ def gradient_descent_interactive(args=None):
             print(f"   Multi-start: {num_starts} runs, range: {range_str}")
         if noise_amount > 0:
             print(f"   Noise: {noise_amount} (every {noise_freq} iterations)")
-        if animate:
-            print(f"   Animation: Enabled")
         print("-" * 70)
         
         # Run gradient descent
@@ -1260,8 +1214,7 @@ def gradient_descent_interactive(args=None):
             func_str, start_values, initial_lr, decay_type, 
             power, max_iterations, show_plots, save_prefix,
             multi_start, num_starts, range_str,
-            noise_amount, noise_freq,
-            animate
+            noise_amount, noise_freq
         )
     
     else:
@@ -1381,14 +1334,6 @@ def gradient_descent_interactive(args=None):
             noise_amount = 0
             noise_freq = 10
         
-        # Ask about animation
-        animate_choice = safe_get_input(
-            "\nCreate an animated GIF of the descent? (y/n, default = n): ",
-            validation=lambda x: x in ['y', 'n', ''],
-            error_msg="Enter y or n."
-        )
-        animate = animate_choice == 'y'
-        
         # Suggest initial learning rate
         suggested_lr, reason = suggest_learning_rate(func_str, start_values)
         print(f"\n    Initial Learning Rate Suggestion: {suggested_lr}")
@@ -1452,8 +1397,6 @@ def gradient_descent_interactive(args=None):
         print(f"Learning Rate: {initial_lr}")
         print(f"Decay: {decay_type}")
         print(f"Iterations: {max_iterations}")
-        if animate:
-            print(f"Animation: Enabled")
         print("-" * 70)
         
         # Run gradient descent
@@ -1461,8 +1404,7 @@ def gradient_descent_interactive(args=None):
             func_str, start_values, initial_lr, decay_type, 
             power, max_iterations, show_plots, save_prefix,
             multi_start, num_starts, range_str,
-            noise_amount, noise_freq,
-            animate
+            noise_amount, noise_freq
         )
 
 
